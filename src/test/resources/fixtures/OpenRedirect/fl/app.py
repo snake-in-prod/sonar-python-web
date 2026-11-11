@@ -42,3 +42,29 @@ def search():
 @app.route("/page")
 def page():
     return redirect("/docs/" + request.args.get("p", ""))
+
+
+@app.route("/proxy/<channel>/<file>")
+def proxy(channel, file):
+    # the server's own scheme and host come first, then a "/": the channel cannot move the target elsewhere
+    protocol = app.config["PROTOCOL"]
+    return redirect(protocol + app.config["PROXY_HOST"] + "/live/" + channel + "/" + file)
+
+
+@app.route("/edge/<endpoint>")
+def edge(endpoint):
+    return redirect("/" + app.config["EDGE"] + "/" + endpoint)
+
+
+def upload_root_url():
+    return app.config["UPLOAD_ROOT"]
+
+
+@app.route("/avatars/<path:path>")
+def avatar(path):
+    return redirect(upload_root_url() + path)
+
+
+@app.route("/bounce")
+def bounce():
+    return redirect(app.config["PREFIX"] + request.args.get("to", ""))  # Noncompliant

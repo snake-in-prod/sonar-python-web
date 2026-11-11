@@ -68,21 +68,27 @@ above the file (deepest first) and its `src/`, so a Django app beside manage.py 
 ### Endpoints
 
 - FastAPI: `FastAPI()` and `APIRouter(prefix=..., dependencies=[...])` objects (module level or in a factory),
-  `@x.get/post/put/patch/delete/options/head/api_route(...)`, `include_router(router, prefix=..., dependencies=[...])`
-  followed up to the app. Auth: a `Depends(...)` whose callable says auth by its name (get_current_user, oauth2_scheme,
+  project subclasses of either, `@x.get/post/put/patch/delete/options/head/api_route(...)`,
+  `include_router(router, prefix=..., dependencies=[...])` followed up to the app. Auth: a `Depends(...)` whose callable says auth by its name (get_current_user, oauth2_scheme,
   require_admin, current_session...), any `Security(...)`, a `fastapi.security` scheme, an `Annotated[..., Depends(...)]`
   alias, or a project dependency that is defined in an auth module, reads a credential cookie or header, or itself
   depends on one of those; on the route, a parameter, a router, an include or the app.
-- Django: from ROOT_URLCONF (else every urlconf no other includes), `path` / `re_path` / `url` entries, `include()`
-  of modules, inline lists and DRF routers. Function views (methods from `require_POST`, `require_http_methods`,
+- Django: from every ROOT_URLCONF of the settings (several projects in one repository, a second urlconf set under an
+  `if`; else every urlconf no other includes), `path` / `re_path` / `url` entries, `include()` of modules, inline lists,
+  list variables (`include((extra, "ns"))`, `urlpatterns = i18n_patterns(*i18n_urls) + urls`, `urls += [...]`,
+  `urlpatterns = [...] + urlpatterns` under an `if`) and DRF routers; Django 1.x `patterns("", ...)`, tuple entries and
+  string views (`"blog.views.index"`); views imported with `from .views import *`. Function views (methods from `require_POST`, `require_http_methods`,
   `api_view`, else from `request.method` checks, else ANY), class-based views (one endpoint per handler method, one
   for what a generic base provides), ViewSets (one per action and per `@action`). Auth: decorators
   (`login_required`, `permission_required`, `user_passes_test`, `permission_classes`...), wrappers in urls.py,
   `method_decorator`, auth mixins, `permission_classes` (AllowAny means open), DRF DEFAULT_PERMISSION_CLASSES,
-  LoginRequiredMiddleware, checks of `request.user` in the body.
-- Flask: `Flask()` apps and `Blueprint(url_prefix=...)`, `@x.route(rule, methods=[...])`, `@x.get/post/...`,
-  `add_url_rule`, `register_blueprint(url_prefix=...)`. Auth: decorators (`login_required`, `jwt_required`...), checks
-  in the body, `before_request` guards of the blueprint or the app whose body checks the user.
+  LoginRequiredMiddleware, checks of `request.user` in the body, a project decorator whose wrapper checks the caller
+  (`@require_perm(P.EDIT)` testing `current_user`).
+- Flask: `Flask()` apps (also `application = create_app()` with a project factory) and `Blueprint(url_prefix=...)`,
+  `@x.route(rule, methods=[...])`, `@x.get/post/...`, `add_url_rule`, `register_blueprint(url_prefix=...)`. Auth:
+  decorators (`login_required`, `jwt_required`..., every one with its arguments: `@login_required
+  @roles_required("Admin")`), project decorators that check the caller, checks in the body, `before_request` guards of
+  the blueprint or the app whose body checks the user.
 
 ## The taint engine (package `taint`)
 
@@ -91,27 +97,35 @@ above the file (deepest first) and its `src/`, so a Django app beside manage.py 
 
 Sources: request objects (a parameter named request or typed Request / HttpRequest, `self.request` in methods,
 `flask.request`) read through the `requestAttributes` of the models (GET, POST, body, FILES, COOKIES, META, headers,
-data, query_params, json, form, args, values, files, get_json...); FastAPI endpoint parameters that are not
-dependencies, requests or responses (query, path and body parameters, Pydantic models, UploadFile); Django and Flask
-URL parameters not declared int, float, uuid or slug.
+data, query_params, json, form, args, values, files, get_json, path...; not request.url or get_full_path(), which
+come percent-encoded); FastAPI endpoint parameters that are not dependencies, requests or responses (query, path and
+body parameters, Pydantic models, UploadFile); Django and Flask URL parameters not declared int, float, uuid or slug,
+nor matched by a digits-only regex group (`(\d+)`, `(?P<pk>[0-9]+)`).
 
 Propagation inside a function: assignments (tuple targets, `x.attr`, `d[k] = v` stores into `d`), augmented
 assignments, f-strings (each field parsed), `%`, `+`, `" ".join(...)`, `.format(...)`, containers and comprehensions,
 attribute, index and method reads on a tainted value (except the `cleanMethods` such as isdigit), mutating calls
-(`parts.append(x)` taints `parts`), `with ... as x`, `for x in ...`. Comparisons, `not`, lambdas and unknown calls
+(`parts.append(x)` taints `parts`; `f.write(x)` taints the buffer's content, not a path), `with ... as x`,
+`for x in ...`. Comparisons, `not`, lambdas and unknown calls
 give clean values; `propagators` (str, os.path.join, json.loads, pathlib.Path...) pass their arguments through.
-Branches of `if` and `try` are analysed apart and joined; loop bodies run twice.
+Branches of `if` and `try` are analysed apart and joined (a branch ending in return or raise does not reach the code
+after the `if`); loop bodies run twice. A URL whose start the server fixes clears the URL kinds (ssrf, redirect): a
+literal start (`"https://api.example/"`, `"/items/"`), or server values before a literal starting with "/", "?" or "#"
+(`protocol + settings.HOST + "/live/" + name`), or a server value named for a URL base (`upload_root_url() + path`).
 
 Inter-procedural: each project function gets a `Summary` with `returns()` (parameter index to the flow reaching the
 return value), `returnSources()` (request inputs it returns itself) and `sinks()` (`ParamSink`: parameter, sink kind,
 path to the sink). Calls of module functions, imported functions, `self.method()` and `Class.method()` use the
-callee's summary. Summaries are recomputed over all functions until none changes or 8 rounds (the depth bound); a
+callee's summary, and so do methods of a module-level instance (`dao = Dao()`, then `dao.query(sql)`). Summaries are recomputed over all functions until none changes or 8 rounds (the depth bound); a
 last pass records the findings. Calls on objects of unknown type (`Repo().find(x)`) are not followed.
 
 Sanitizers clear a value for some sink kinds (`int` for all, `shlex.quote` for command, `os.path.basename` for path,
 `html.escape` for template...). Guards clear a variable for the rest of the function when a condition checks it:
 `url_has_allowed_host_and_scheme(url)` (redirect), `p.startswith(base)` (path), `x in ALLOWED` (all kinds),
-`re.match(...)` (all kinds).
+`re.match(...)` (all kinds). A project validation helper (`validate_*`, `is_valid*`, `is_safe*`, `sanitize*`,
+`verify_*`, `assert_*`, `ensure_*`) called on a value, in a condition or as a statement (`err = verify_name(name)`),
+clears it for all kinds; one named for cleaning a path (`clean_path`, `safe_filename`) clears its result for path.
+`hexdigest()`, `digest()` and an upload's `temporary_file_path()` give clean values.
 
 `Finding`: `kind()` (sql, command, path, ssrf, redirect, template, deserialization), `sinkName()` (the call as
 written), `label()` (the input: "request.GET", "parameter q"), `source()`, `sink()`, `path()` (every `Step` from the
@@ -152,7 +166,9 @@ public class TaintedSql implements PwRule {
 - `ctx.module()`, `ctx.model()` (endpoints, name resolution), `ctx.taint()` (findings), `ctx.file()`.
 - `ctx.report(token, message)`, `ctx.report(from, to, message, secondaries)` (secondary locations are `Step`s, in
   any module), or `ctx.report(finding, message)`: at the sink, the rest of the path as secondary locations. The sink
-  must be in the checked module (`findingsIn` gives those). A line with a NOSONAR comment gets no issue.
+  must be in the checked module (`findingsIn` gives those). A line with a NOSONAR comment gets no issue. The analyzer
+  keeps one issue per rule and place: a sink reached from two inputs or two endpoints is one issue; a rule should test
+  every finding of its kind, so that one input it trusts does not hide another.
 - Messages name the endpoint (`finding.where()`, `endpoint.path()`) and say what to do, in one sentence.
 - One rule instance per analysis: a rule may cache what it computes from the model in its fields.
 

@@ -13,7 +13,7 @@ public final class TaintedUrlFetch implements PwRule {
   @Override
   public void check(RuleContext ctx) {
     for (Finding f : TaintChecks.bySink(ctx, "ssrf")) {
-      if (!TaintChecks.adminOnly(f) && !TaintChecks.validatedOnPath(f)
+      if (!TaintChecks.adminOnly(f) && !TaintChecks.ownUrl(f) && !TaintChecks.validatedOnPath(f) && !TaintChecks.hostHelperOnPath(ctx, f)
         && !TaintChecks.checkedOnPath(f, t -> TaintChecks.ident(t, TaintChecks.HOST_CHECKS) || TaintChecks.literal(t, TaintChecks::origin))) {
         ctx.report(f, "Check the host of the URL taken from " + f.label() + " of " + f.where() + " against an allow-list before "
           + f.sinkName() + "() fetches it.");

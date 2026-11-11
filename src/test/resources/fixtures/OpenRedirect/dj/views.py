@@ -1,3 +1,5 @@
+from urllib.parse import urlparse
+
 from django.http import HttpResponseRedirect
 from django.shortcuts import redirect
 from django.utils.http import url_has_allowed_host_and_scheme
@@ -26,3 +28,19 @@ def back(request):
 
 def to_item(request, slug):
     return redirect(f"/items/{slug}/")
+
+
+def _allow_redirect(url):
+    parsed = urlparse(url)
+    return not parsed.netloc
+
+
+def after_login(request):
+    target = request.GET.get("next")
+    if target and _allow_redirect(target):
+        return redirect(target)
+    return redirect("/")
+
+
+def same_page(request):
+    return redirect(request.path)

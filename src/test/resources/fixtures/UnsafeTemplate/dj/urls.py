@@ -8,4 +8,6 @@ urlpatterns = [
     path("greet/escaped/", views.greet_escaped),
     path("greet/html/", views.greet_html),
     path("card/safe/", views.card_safe),
+    path("crumb/", views.breadcrumb),
+    path("pager/", views.pager),
 ]

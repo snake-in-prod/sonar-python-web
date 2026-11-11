@@ -51,6 +51,20 @@ final class AuthHints {
   private AuthHints() {
   }
 
+  /** What a project decorator's wrapper checks: current_user, request.user, a 401/403, or an auth decorator inside. */
+  private static final Pattern WRAPPER = Pattern.compile("current_user|request\\.user|g\\.user|session\\[|session\\.get\\(|"
+    + "login_required|is_authenticated|abort\\((401|403)|status=40[13]|status_code=40[13]|HTTP_40[13]|PermissionDenied|"
+    + "Unauthorized|Forbidden|verify_jwt|jwt_required|get_jwt_identity");
+
+  /**
+   * The decorator names a project function whose code checks the caller: {@code @require_perm(P.EDIT)} defined as a
+   * wrapper that tests {@code current_user}.
+   */
+  static boolean checkingDecorator(WebModel model, Module m, Decorator d) {
+    Function f = model.function(m, d.name());
+    return f != null && WRAPPER.matcher(bodyText(f)).find();
+  }
+
   static boolean authPackage(String dotted) {
     return PACKAGES.stream().anyMatch(p -> dotted.equals(p) || dotted.startsWith(p + "."));
   }

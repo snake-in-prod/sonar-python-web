@@ -57,6 +57,11 @@ final class FastApiRoutes {
           continue;
         }
         String callee = m.resolve(Exprs.head(c));
+        PyClass own = callee.startsWith("fastapi.") ? null : model.cls(m, Exprs.head(c));
+        if (own != null) {
+          // class SimplifyingRouter(APIRouter): a project subclass of the app or router class
+          callee = model.externalBases(own).stream().filter(b -> b.startsWith("fastapi.")).findFirst().orElse(callee);
+        }
         if (callee.startsWith("fastapi.") && (callee.endsWith(".FastAPI") || callee.endsWith(".APIRouter"))) {
           String prefix = Exprs.string(Exprs.arg(call, -1, "prefix"));
           List<Node> deps = Exprs.arg(call, -1, "dependencies");

@@ -91,7 +91,11 @@ public final class Module {
     List<Node> value = parts.get(parts.size() - 1);
     for (List<Node> t : parts.subList(0, parts.size() - 1)) {
       String target = Exprs.dotted(Exprs.unannotated(t));
-      if (target != null) {
+      if (target != null && assignments.containsKey(target)
+        && Pattern.compile("(?<![\\w.])" + Pattern.quote(target) + "(?!\\w)").matcher(Exprs.text(value)).find()) {
+        // x = [...] + x keeps what x held
+        assignments.get(target).add(value);
+      } else if (target != null) {
         List<List<Node>> values = new ArrayList<>();
         values.add(value);
         assignments.put(target, values);

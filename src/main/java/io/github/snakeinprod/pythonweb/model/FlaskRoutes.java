@@ -46,6 +46,23 @@ final class FlaskRoutes {
     return new FlaskRoutes(model).run();
   }
 
+  /** An app factory: a project function whose body builds a {@code Flask(...)} app. */
+  private static boolean makesApp(Function f) {
+    if (f == null) {
+      return false;
+    }
+    for (PyStatement s : f.body()) {
+      for (PyStatement x : s.walk()) {
+        for (Chain c : Chains.in(x.group())) {
+          if (Exprs.firstCall(c) != null && f.module().resolve(Exprs.head(c)).equals("flask.Flask")) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
   private List<Endpoint> run() {
     List<Module> flask = model.modules().stream().filter(m -> !m.isTest() && m.frameworks().contains(Framework.FLASK)).toList();
     for (Module m : flask) {
@@ -61,6 +78,9 @@ final class FlaskRoutes {
         if (callee.equals("flask.Flask") || callee.equals("flask.Blueprint") || callee.equals("flask.blueprints.Blueprint")) {
           String prefix = Exprs.string(Exprs.arg(call, -1, "url_prefix"));
           holders.put(m.path() + "#" + var, new Holder(m, var, callee.equals("flask.Flask"), prefix == null ? "" : prefix));
+        } else if (makesApp(model.function(m, Exprs.head(c)))) {
+          // application = create_app()
+          holders.put(m.path() + "#" + var, new Holder(m, var, true, ""));
         }
       }
     }
@@ -190,8 +210,11 @@ final class FlaskRoutes {
     String path = rule == null ? "" : rule;
     String auth = null;
     for (Decorator d : f.decorators()) {
-      if (auth == null && AuthHints.DECORATOR.matcher(d.name()).find()) {
-        auth = "@" + d.name();
+      if (AuthHints.DECORATOR.matcher(d.name()).find() || AuthHints.checkingDecorator(model, f.module(), d)) {
+        // every check, with its arguments: "@login_required @roles_required("Admin")"
+        String args = d.call() == null ? "" : Exprs.text(d.call().args().children());
+        String one = "@" + d.name() + (args.isEmpty() ? "" : "(" + args + ")");
+        auth = auth == null ? one : auth + " " + one;
       }
     }
     if (auth == null && AuthHints.BODY.matcher(AuthHints.bodyText(f)).find()) {

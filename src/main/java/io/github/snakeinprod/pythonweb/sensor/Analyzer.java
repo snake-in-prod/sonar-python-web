@@ -72,6 +72,8 @@ public final class Analyzer {
       }
     }
     List<Issue> issues = new ArrayList<>();
+    // one issue per rule and place: a sink reached from two inputs or two endpoints is one defect
+    Set<String> places = new HashSet<>();
     for (Map.Entry<String, PwRule> e : rules.entrySet()) {
       String key = e.getKey();
       e.getValue().check(new RuleContext() {
@@ -92,7 +94,7 @@ public final class Analyzer {
 
         @Override
         public void report(Token from, Token to, String message, List<Step> secondaries) {
-          if (!nosonar.contains(from.line())) {
+          if (!nosonar.contains(from.line()) && places.add(key + ":" + from.line() + ":" + from.column())) {
             List<Location> locations = secondaries.stream().map(s -> new Location(s.module().path(), s.token().line(),
               s.token().column(), s.token().endLine(), s.token().endColumn(), s.message())).toList();
             issues.add(new Issue(module.path(), key, from.line(), from.column(), to.endLine(), to.endColumn(), message, locations));

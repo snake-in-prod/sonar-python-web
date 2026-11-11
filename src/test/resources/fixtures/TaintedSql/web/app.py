@@ -56,3 +56,37 @@ def lookup():
     message = f"looking up {key} in the cache"
     app.logger.info(message)
     return jsonify(db.session.execute(text("SELECT * FROM cache WHERE k = :k"), {"k": key}).first())
+
+
+class Dao:
+    def query(self, sql):
+        cur = connect().cursor()
+        cur.execute(sql)  # Noncompliant {{request.form of POST /kill}}
+        return cur.fetchall()
+
+
+dao = Dao()
+
+
+@app.route("/kill", methods=["POST"])
+def kill():
+    ids = request.form["ids"]
+    return jsonify(dao.query("select id from processlist where id in ({});".format(ids)))
+
+
+@app.route("/people")
+def people():
+    query_prefix = "SELECT * FROM person WHERE username like '%"
+    search = request.args.get("search")
+    return jsonify(db.session.execute(query_prefix + search + "%'"))  # Noncompliant
+
+
+def validate_jobid(jid):
+    return jid.isalnum()
+
+
+@app.route("/jobs/<jobid>")
+def job(jobid):
+    if not validate_jobid(jobid):
+        return "bad id", 400
+    return jsonify(db.session.execute(text(f"SELECT * FROM jobs WHERE id = '{jobid}'")).first())

@@ -2,6 +2,7 @@ from enum import Enum
 from typing import Annotated, Literal, Optional
 
 from fastapi import Depends, FastAPI, Query
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -48,3 +49,39 @@ def sorted_products(sort: Sort, direction: Literal["asc", "desc"] = "asc", db: S
 @app.get("/products/named")
 def named(term: str, db: Session = Depends(get_db)):
     return db.execute(text("SELECT * FROM product WHERE name = :term").bindparams(term=term)).all()
+
+
+class ProductUpdate(BaseModel):
+    name: Optional[str] = None
+    price: Optional[float] = None
+    sort: Optional[str] = None
+
+
+@app.put("/products/{pid}")
+def update_product(pid: int, req: ProductUpdate, db: Session = Depends(get_db)):
+    # the columns are the model's field names, the values are bound
+    fields = req.model_dump(exclude_unset=True)
+    set_clause = ", ".join(f"{k} = :{k}" for k in fields)
+    fields["id"] = pid
+    db.execute(text(f"UPDATE product SET {set_clause} WHERE id = :id"), fields)
+
+
+@app.patch("/products/{pid}")
+def rename_product(pid: int, req: ProductUpdate, db: Session = Depends(get_db)):
+    fields = {}
+    if req.name is not None:
+        fields["name"] = req.name
+    set_parts = [f"{k} = :{k}" for k in fields]
+    fields["id"] = pid
+    db.execute(text(f"UPDATE product SET {', '.join(set_parts)} WHERE id = :id"), fields)
+
+
+@app.get("/products/sorted")
+def sorted_products(req: ProductUpdate, db: Session = Depends(get_db)):
+    return db.execute(text(f"SELECT * FROM product ORDER BY {req.sort}")).all()  # Noncompliant
+
+
+@app.post("/charts/preview")
+def preview(sql_query: str, db: Session = Depends(get_db)):
+    # the caller's whole query, wrapped as a subquery: a query console
+    return db.execute(text(f"SELECT * FROM ({sql_query}) _t LIMIT 0")).keys()

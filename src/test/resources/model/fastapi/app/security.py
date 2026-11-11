@@ -1,0 +1,2 @@
+def gate():
+    return None

@@ -182,8 +182,10 @@ every file, for pull requests, where SonarQube keeps only the changed files' mea
 `static/pythonweb.js`, registered as `pythonweb/pythonweb`. SonarQube mounts extension pages in a two-column grid:
 the page sets `options.el.style.gridColumn = '1 / -1'` and `width = '100%'`, and uses no CSS container queries.
 Plain DOM, charts as inline SVG built with `createElementNS`, no innerHTML with data, light and dark themes, on the
-branch or pull request being viewed. For now a placeholder; to come: tiles, the endpoint route tree with method badges
-and a dot coloured by issues, the framework split and issues by rule.
+branch or pull request being viewed. Tiles (endpoints, unprotected endpoints, taint findings, blocking calls), the
+endpoint route tree from pw_endpoints_json (one row per path segment, chains without endpoints collapsed, method badges,
+async and "no auth" tags, a dot coloured by issues, the handler), the framework split with mutating, unprotected and
+async counts, and open issues by rule coloured by rule type. On a pull request the tiles read the totals of pw_app_json.
 
 ## Conventions
 

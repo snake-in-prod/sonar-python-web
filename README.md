@@ -43,6 +43,11 @@ pw_endpoints, pw_mutating_endpoints, pw_unprotected_endpoints, pw_async_endpoint
 pw_taint_findings, and pw_endpoints_json (every endpoint with its path, methods, framework, function, auth, async flag
 and issues) for the "Python Web" project page.
 
+The "Python Web" project page shows the endpoints as a route tree with their methods, issues, missing auth and
+handlers, the split by framework and the open issues by rule, on the branch or pull request being viewed:
+
+![Python Web project page](docs/images/pythonweb-page.png)
+
 See [docs/DESIGN.md](docs/DESIGN.md) for how it works and how to write a rule.
 
 ## License

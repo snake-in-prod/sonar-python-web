@@ -74,7 +74,9 @@ class PluginTest {
       String js = new String(in.readAllBytes(), StandardCharsets.UTF_8);
       assertThat(js).contains("window.registerExtension('" + key + "'");
       // SonarQube places extension pages in a two-column grid
-      assertThat(js).contains("options.el.style.gridColumn = '1 / -1'", "options.el.style.width = '100%'", "aria-label")
+      // charts are inline SVG built node by node; the measures it reads are this plugin's
+      assertThat(js).contains("options.el.style.gridColumn = '1 / -1'", "options.el.style.width = '100%'", "aria-label",
+        "createElementNS", "'pw_endpoints_json'", "'pw_app_json'", "branchLike", "'pythonweb-python'")
         .doesNotContain("container-type", "innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(");
     }
   }

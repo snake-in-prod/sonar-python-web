@@ -2,8 +2,8 @@
 
 A SonarQube plugin with framework-aware security and correctness rules for Django (Django REST framework included),
 FastAPI and Flask, for SonarQube Community Build, whose bundled Python analyzer has no taint analysis. It builds a
-model of the app's endpoints (routes, views, their authentication) and follows request data across functions and
-modules to SQL, shell, file, URL fetch, redirect, template and deserialization sinks. Each issue names the endpoint
+model of the app's endpoints (routes, views, their authentication) and follows request data across functions,
+modules and instance attributes to SQL, shell, file, URL fetch, redirect, template and deserialization sinks. Each issue names the endpoint
 and shows the path as secondary locations.
 
 The rules were validated on about 40 code bases: Django and DRF apps (netbox, saleor, zulip, wagtail, healthchecks,

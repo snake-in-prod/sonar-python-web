@@ -1,0 +1,32 @@
+<p>Reading a related object on each row of a Django queryset makes one more query per row: a list of 100 orders that
+shows each order's customer runs 101 queries. <code>select_related</code> fetches ForeignKey and OneToOneField relations
+in the same query (a join); <code>prefetch_related</code> fetches ManyToMany and reverse relations in one more query for
+all rows.</p>
+<p>This rule reports, in a <code>for</code> loop or a comprehension over <code>Model.objects...</code> (built in the loop
+or assigned once in the function), the first read of each relation of the loop variable when the queryset has no
+<code>select_related</code> or <code>prefetch_related</code>: <code>order.customer</code> for a ForeignKey or
+OneToOneField, <code>order.tags.all()</code>, <code>count()</code>, <code>exists()</code>, <code>first()</code> or
+<code>last()</code> for a ManyToMany field or a reverse relation (<code>related_name</code> or <code>&lt;model&gt;_set</code>).
+It stays silent for models with a custom manager, querysets passed in from elsewhere or changed after they are built,
+<code>values()</code> and <code>values_list()</code>, <code>prefetch_related_objects</code>, and <code>*_id</code> reads.</p>
+<h2>Noncompliant code example</h2>
+<pre>
+def order_list(request):
+    rows = []
+    for order in Order.objects.filter(paid=True):
+        rows.append((order.customer.name, [t.label for t in order.tags.all()]))  # Noncompliant (twice)
+    return JsonResponse(rows, safe=False)
+</pre>
+<h2>Compliant solution</h2>
+<pre>
+def order_list(request):
+    rows = []
+    for order in Order.objects.filter(paid=True).select_related("customer").prefetch_related("tags"):
+        rows.append((order.customer.name, [t.label for t in order.tags.all()]))
+    return JsonResponse(rows, safe=False)
+</pre>
+<h2>Resources</h2>
+<ul>
+  <li>Django documentation: QuerySet API reference, <code>select_related()</code> and <code>prefetch_related()</code></li>
+  <li>Django documentation: Database access optimization</li>
+</ul>

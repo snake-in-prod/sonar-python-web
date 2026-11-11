@@ -1,0 +1,52 @@
+<p>A default value written as <code>[]</code>, <code>{}</code>, <code>set()</code> or another mutable object is created once,
+when the module is imported, and then shared. This rule reports such defaults where the sharing is a defect:</p>
+<ul>
+  <li>a parameter of a Django or Flask endpoint that the view changes in place: Django and Flask call the view with the
+  default itself, so every request (of every user) sees and changes the same object;</li>
+  <li>a field of an attrs class (<code>attr.ib(default=[])</code>, <code>attrs.field(default={})</code>, or an annotated
+  attribute of an <code>@attrs.define</code> class): every instance gets the same object;</li>
+  <li>the default of a Django <code>JSONField</code>, <code>ArrayField</code> or <code>HStoreField</code>: every new model
+  instance gets the same object until it is saved and loaded again;</li>
+  <li>a field of a standard library <code>@dataclass</code>: the class raises <code>ValueError</code> when the module is imported.</li>
+</ul>
+<p>Pydantic models and the parameters of FastAPI endpoints are not reported: Pydantic and FastAPI copy their defaults for
+each instance and each request. Parameters that the view only reads, or rebinds before changing, are not reported either.</p>
+<h2>Noncompliant code example</h2>
+<pre>
+@app.route("/visit")
+def visit(seen={}):  # Noncompliant: the same dict for every request
+    seen[request.remote_addr] = True
+    return jsonify(sorted(seen))
+
+
+class Post(models.Model):
+    meta = models.JSONField(default={})  # Noncompliant
+
+
+@attrs.define
+class Cart:
+    items: list = []  # Noncompliant
+</pre>
+<h2>Compliant solution</h2>
+<pre>
+@app.route("/visit")
+def visit(seen=None):
+    seen = {} if seen is None else seen
+    seen[request.remote_addr] = True
+    return jsonify(sorted(seen))
+
+
+class Post(models.Model):
+    meta = models.JSONField(default=dict)
+
+
+@attrs.define
+class Cart:
+    items: list = attrs.field(factory=list)
+</pre>
+<h2>Resources</h2>
+<ul>
+  <li>Python documentation: default parameter values are evaluated once, when the function is defined</li>
+  <li>Django documentation: <code>Field.default</code> must not be a mutable object; use a callable</li>
+  <li>attrs documentation: <code>Factory</code> and <code>field(factory=...)</code></li>
+</ul>

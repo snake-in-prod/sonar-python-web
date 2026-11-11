@@ -309,7 +309,7 @@ class TaintEngineTest {
               return HttpResponseRedirect(target)
 
           def post(self, request, slug):
-              return HttpResponseRedirect("/posts/" + slug)
+              return HttpResponseRedirect(slug)
       """, "blog/urls.py", """
       from django.urls import path
       from .views import Jump

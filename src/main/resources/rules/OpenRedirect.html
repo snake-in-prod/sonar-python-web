@@ -1,0 +1,33 @@
+<p>Request data passed as the target of Django <code>redirect()</code> or <code>HttpResponseRedirect</code>, Flask or
+Werkzeug <code>redirect()</code>, or a FastAPI / Starlette <code>RedirectResponse</code> sends users anywhere from a link
+on the trusted site: a phishing page that looks like the login form, or a page that steals an OAuth code. A check that
+the target starts with <code>/</code> is not enough: <code>//evil.example</code> passes it.</p>
+<p>The issue names the endpoint the data comes in through and shows its path to the call.</p>
+<h2>Noncompliant code example</h2>
+<pre>
+def login_done(request):
+    return redirect(request.GET["next"])  # Noncompliant
+</pre>
+<h2>Compliant solution</h2>
+<pre>
+def login_done(request):
+    target = request.GET.get("next", "/")
+    if not url_has_allowed_host_and_scheme(target, allowed_hosts={request.get_host()}, require_https=request.is_secure()):
+        target = "/"
+    return redirect(target)
+</pre>
+<h2>When the rule stays silent</h2>
+<ul>
+  <li>The target is checked with <code>url_has_allowed_host_and_scheme</code>, an <code>is_safe_url</code> helper, an
+    allow-list (<code>target in ALLOWED</code>), or a condition on its <code>netloc</code> or <code>hostname</code>, or one
+    that excludes <code>"//"</code>, or a URL check helper runs on the way (<code>validate_redirect_url(...)</code>).</li>
+  <li>The request data comes after a literal path, host or query start: <code>f"/items/{slug}/"</code>,
+    <code>"/docs/" + page</code>, <code>url += f"&amp;page={n}"</code>.</li>
+  <li>The target comes from a header or a cookie (a Referer sends users back where they came from), or is built by
+    <code>reverse()</code> or <code>url_for()</code>.</li>
+</ul>
+<h2>Resources</h2>
+<ul>
+  <li><a href="https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html">OWASP: Unvalidated Redirects and Forwards Cheat Sheet</a></li>
+  <li><a href="https://cwe.mitre.org/data/definitions/601.html">CWE-601: URL Redirection to Untrusted Site ('Open Redirect')</a></li>
+</ul>

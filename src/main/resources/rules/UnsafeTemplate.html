@@ -1,0 +1,40 @@
+<p>Template engines escape what they render. Request data that skips the escaping is cross-site scripting: passed
+to Django <code>mark_safe</code> or <code>markupsafe.Markup</code>, put in an <code>HTMLResponse</code>, or returned in a
+string by a FastAPI endpoint declared with <code>response_class=HTMLResponse</code>. Request data used as the template
+source itself (<code>render_template_string</code>, <code>jinja2.Template</code>, <code>Environment.from_string</code>,
+<code>django.template.Template</code>) is worse: template injection runs code on the server.</p>
+<p>The issue names the endpoint the data comes in through and shows its path to the call.</p>
+<h2>Noncompliant code example</h2>
+<pre>
+@app.route("/hello")
+def hello():
+    return render_template_string("Hello " + request.args["name"])  # Noncompliant
+
+@app.get("/hello", response_class=HTMLResponse)
+def hello(name: str):
+    return f"&lt;h1&gt;Hello {name}&lt;/h1&gt;"  # Noncompliant
+</pre>
+<h2>Compliant solution</h2>
+<pre>
+@app.route("/hello")
+def hello():
+    return render_template_string("Hello {{ name }}", name=request.args["name"])
+
+@app.get("/hello", response_class=HTMLResponse)
+def hello(name: str):
+    return f"&lt;h1&gt;Hello {html.escape(name)}&lt;/h1&gt;"
+</pre>
+<h2>When the rule stays silent</h2>
+<ul>
+  <li>The value is escaped first: <code>html.escape</code>, <code>django.utils.html.escape</code>,
+    <code>markupsafe.escape</code>, <code>Markup.escape</code>, <code>bleach.clean</code>, <code>nh3.clean</code>.</li>
+  <li>The value goes through <code>format_html</code>, <code>Markup("...") % value</code>, or is passed to the template
+    as a variable.</li>
+  <li>The value is a FastAPI parameter typed <code>int</code> or another scalar.</li>
+</ul>
+<h2>Resources</h2>
+<ul>
+  <li><a href="https://owasp.org/www-community/attacks/xss/">OWASP: Cross Site Scripting</a></li>
+  <li><a href="https://cwe.mitre.org/data/definitions/79.html">CWE-79: Improper Neutralization of Input During Web Page Generation</a></li>
+  <li><a href="https://cwe.mitre.org/data/definitions/1336.html">CWE-1336: Improper Neutralization of Special Elements Used in a Template Engine</a></li>
+</ul>

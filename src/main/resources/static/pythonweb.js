@@ -15,14 +15,14 @@ window.registerExtension('pythonweb/pythonweb', function (options) {
   var REPO = 'pythonweb-python';
   var TAINT_RULES = ['TaintedSql', 'TaintedCommand', 'TaintedPath', 'TaintedUrlFetch', 'OpenRedirect', 'UnsafeTemplate',
     'UnsafeDeserialization'];
-  var NO_DATA = 'Analyse the project with this plugin installed; it needs Python code importing Django, FastAPI or Flask';
+  var NO_DATA = 'Analyse the project with this plugin installed; it needs Python code importing Django, FastAPI, Flask or aiohttp';
   var MEASURES = ['pw_endpoints', 'pw_mutating_endpoints', 'pw_unprotected_endpoints', 'pw_async_endpoints',
     'pw_blocking_calls', 'pw_taint_findings', 'pw_endpoints_json', 'pw_app_json'];
   var NAMES = {pw_endpoints: 'Endpoints', pw_mutating_endpoints: 'Mutating endpoints',
     pw_unprotected_endpoints: 'Unprotected endpoints', pw_async_endpoints: 'Async endpoints',
     pw_blocking_calls: 'Blocking calls in async', pw_taint_findings: 'Taint findings'};
   var FRAMEWORKS = [{key: 'django', label: 'Django'}, {key: 'drf', label: 'Django REST'}, {key: 'fastapi', label: 'FastAPI'},
-    {key: 'flask', label: 'Flask'}];
+    {key: 'flask', label: 'Flask'}, {key: 'aiohttp', label: 'aiohttp'}];
   var METHOD_ORDER = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
   var TREE_ROWS = 60;
 
@@ -307,10 +307,10 @@ window.registerExtension('pythonweb/pythonweb', function (options) {
     '--blue:#2a78d6;--clean:#2a78d6;--orange:#e8a33d;--red:#d03b3b;--dyn:#7b4fc9;--track:rgba(128,128,128,.2);' +
     '--ok:#0b7a0b;--err:#d03b3b;--card:rgba(128,128,128,.06);--rule:rgba(128,128,128,.28);' +
     '--m-get:#2a6fc4;--m-post:#17804a;--m-put:#b36b00;--m-patch:#8a52c2;--m-delete:#c0392b;--m-other:#6b6b6b;' +
-    '--fw-django:#0f6e57;--fw-drf:#52a37f;--fw-fastapi:#2a8fb8;--fw-flask:#8f8a7e}' +
+    '--fw-django:#0f6e57;--fw-drf:#52a37f;--fw-fastapi:#2a8fb8;--fw-flask:#8f8a7e;--fw-aiohttp:#b5527a}' +
     '.pw.pw-dark{--blue:#4a94ec;--clean:#4a94ec;--orange:#f0b45a;--red:#ee6b6b;--dyn:#b294f0;--ok:#3fbf3f;--err:#ee6b6b;' +
     '--m-get:#6aa8f0;--m-post:#4cc27f;--m-put:#f0a33c;--m-patch:#b68cf0;--m-delete:#f07a6e;--m-other:#a3a3a3;' +
-    '--fw-django:#2fa384;--fw-drf:#86d1ad;--fw-fastapi:#4fb3de;--fw-flask:#a9a496}' +
+    '--fw-django:#2fa384;--fw-drf:#86d1ad;--fw-fastapi:#4fb3de;--fw-flask:#a9a496;--fw-aiohttp:#e08aae}' +
     '.pw-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;margin:16px 0 12px 0}' +
     '.pw h1{font-size:20px;margin:0}.pw h2{font-size:14px;font-weight:600;margin:0 0 12px 0}' +
     '.pw-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;list-style:none;padding:0;margin:0 0 12px 0}' +

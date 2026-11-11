@@ -173,6 +173,8 @@ public final class TaintEngine {
     private final Summary summary = new Summary();
     private final Set<String> sinkKeys = new HashSet<>();
     private Taint returned = Taint.EMPTY;
+    /** {@code port = PROXIES.get(host)}: the variable holding a lookup in a fixed map, and the key it looked up. */
+    private final Map<String, List<Node>> lookups = new HashMap<>();
 
     Analysis(Function fn, boolean collect) {
       this.fn = fn;
@@ -487,6 +489,7 @@ public final class TaintEngine {
         List<List<Node>> parts = Exprs.assignment(part);
         if (parts.size() >= 2) {
           List<Node> value = parts.get(parts.size() - 1);
+          lookup(parts.get(0), value);
           Taint t = eval(value, env);
           for (List<Node> target : parts.subList(0, parts.size() - 1)) {
             bind(target, t, value, env);
@@ -874,7 +877,7 @@ public final class TaintEngine {
       for (int i = from; i < segs.size() && !t.isEmpty(); i++) {
         if (segs.get(i) instanceof Chain.Name n && i + 1 < segs.size() && segs.get(i + 1) instanceof Chain.Call) {
           String name = n.token().text();
-          if (models.cleanMethods.contains(name)) {
+          if (models.cleanMethods.contains(name) || numberType((Chain.Call) segs.get(i + 1))) {
             return Taint.EMPTY;
           }
           Set<String> kinds = models.sanitizer("*." + name, name, true);
@@ -882,6 +885,12 @@ public final class TaintEngine {
         }
       }
       return t;
+    }
+
+    /** {@code request.args.get("page", type=int)}: werkzeug converts the value, or gives the default. */
+    private static boolean numberType(Chain.Call call) {
+      List<Node> type = Exprs.kwargs(call).get("type");
+      return type != null && Set.of("int", "float", "bool").contains(Exprs.text(type));
     }
 
     /** The value of a call: a project function's summary, a sanitizer, a propagator, else clean. */
@@ -1053,6 +1062,13 @@ public final class TaintEngine {
           }
         }
       }
+      for (Node n : cond) {
+        // if not port: return ... after port = PROXIES.get(host): host is one of the map's keys
+        List<Node> key = Nodes.leaf(n) != null && Nodes.leaf(n).kind() == TokenKind.IDENT ? lookups.get(Nodes.leaf(n).text()) : null;
+        if (key != null) {
+          clearVars(key, Set.of("*"), env);
+        }
+      }
       for (List<Node> part : splitIdents(cond, Set.of("and", "or"))) {
         int in = indexOfIdent(part, "in");
         if (in > 0) {
@@ -1062,6 +1078,31 @@ public final class TaintEngine {
             clearVars(part.subList(left, end), Set.of("*"), env);
           }
         }
+      }
+    }
+
+    /**
+     * Records {@code y = MAP.get(x, ...)} where the map is a constant ({@code PROXIES}), configuration
+     * ({@code settings.X}, {@code app.config["X"]}) or an item of one; any other assignment of y forgets it.
+     */
+    private void lookup(List<Node> target, List<Node> value) {
+      String y = Exprs.dotted(Exprs.unannotated(target));
+      if (y == null || y.contains(".")) {
+        return;
+      }
+      lookups.remove(y);
+      Chain c = Exprs.chain(value);
+      List<Chain.Segment> segs = c == null ? List.of() : c.segments();
+      int n = segs.size();
+      if (n < 3 || !c.endsWithCall() || !(segs.get(n - 2) instanceof Chain.Name get) || !get.token().text().equals("get")) {
+        return;
+      }
+      List<List<Node>> args = Exprs.positional((Chain.Call) segs.get(n - 1));
+      String first = c.firstName();
+      boolean constant = first.equals("settings") || first.length() > 1 && first.equals(first.toUpperCase(java.util.Locale.ROOT))
+        || segs.get(n - 3) instanceof Chain.Index && n >= 4 && segs.get(n - 4) instanceof Chain.Name cfg && cfg.token().text().equals("config");
+      if (constant && !args.isEmpty()) {
+        lookups.put(y, args.get(0));
       }
     }
 

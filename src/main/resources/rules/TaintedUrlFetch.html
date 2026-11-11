@@ -1,5 +1,5 @@
 <p>Request data used as the URL of an outgoing request (<code>requests</code>, a <code>requests.Session</code>,
-<code>httpx</code> and its clients, <code>urllib.request</code>, an <code>aiohttp.ClientSession</code>) lets a caller make
+<code>httpx</code> and its clients, <code>urllib.request</code> (Python 2 <code>urllib</code> and <code>urllib2</code> too), an <code>aiohttp.ClientSession</code>) lets a caller make
 the server call any host: internal services, cloud metadata endpoints, admin interfaces behind the firewall. This is
 server-side request forgery (SSRF).</p>
 <p>The issue names the endpoint the data comes in through and shows its path to the call.</p>

@@ -17,13 +17,16 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Request data reaching mark_safe, Markup, render_template_string, a template built from it, or HTMLResponse; and
- * request data returned in a string by a FastAPI endpoint declared with response_class=HTMLResponse.
+ * request data returned in a string by a FastAPI endpoint declared with response_class=HTMLResponse, or in a string
+ * with an HTML tag by a Flask view.
  */
 public final class UnsafeTemplate implements PwRule {
 
+  private static final Pattern TAG = Pattern.compile("</?[A-Za-z][A-Za-z0-9]*(\\s[^<>]*)?/?>");
   private static final Set<String> HTML_RESPONSES = Set.of("fastapi.responses.HTMLResponse", "starlette.responses.HTMLResponse");
 
   @Override
@@ -35,14 +38,18 @@ public final class UnsafeTemplate implements PwRule {
     Set<Function> seen = new HashSet<>();
     for (Endpoint e : ctx.model().endpoints()) {
       Function fn = e.function();
-      if (e.module() == ctx.module() && e.framework() == Framework.FASTAPI && fn != null && seen.add(fn) && returnsHtml(fn)) {
-        returned(ctx, e, fn);
+      boolean flask = e.framework() == Framework.FLASK;
+      if (e.module() == ctx.module() && fn != null && (flask || e.framework() == Framework.FASTAPI && returnsHtml(fn)) && seen.add(fn)) {
+        returned(ctx, e, fn, flask);
       }
     }
   }
 
-  /** Request data returned in a string (an f-string, a concatenation, a variable) as the HTML page: once per return. */
-  private static void returned(RuleContext ctx, Endpoint e, Function fn) {
+  /**
+   * Request data returned in a string (an f-string, a concatenation, a variable) as the HTML page: once per return. A
+   * Flask view's string is HTML too; there the string must be written in the return and hold a tag.
+   */
+  private static void returned(RuleContext ctx, Endpoint e, Function fn, boolean flask) {
     Set<Token> done = new HashSet<>();
     for (Map.Entry<Taint.Origin, Taint.Flow> en : ctx.taint().summary(fn).returnSources().flows().entrySet()) {
       Taint.Flow flow = en.getValue();
@@ -56,7 +63,10 @@ public final class UnsafeTemplate implements PwRule {
       }
       List<Node> value = ret.nodes().subList(1, ret.nodes().size());
       Token lead = value.isEmpty() ? null : Nodes.leaf(value.get(0));
-      if (lead != null && (lead.kind() == TokenKind.STRING || lead.kind() == TokenKind.IDENT && value.size() == 1)) {
+      boolean html = flask ? lead != null && lead.kind() == TokenKind.STRING
+        && Nodes.tokens(value).stream().anyMatch(t -> t.kind() == TokenKind.STRING && TAG.matcher(t.text()).find())
+        : lead != null && (lead.kind() == TokenKind.STRING || lead.kind() == TokenKind.IDENT && value.size() == 1);
+      if (html) {
         ctx.report(value.get(0).first(), ret.last(), "Let the template engine escape " + en.getKey().label() + " of "
           + String.join("|", e.methods()) + " " + e.path() + " instead of returning it in HTML.", flow.path().subList(0, flow.path().size() - 1));
       }

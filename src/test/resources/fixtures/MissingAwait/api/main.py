@@ -1,8 +1,11 @@
 import asyncio
+from typing import Annotated
 
-from fastapi import BackgroundTasks, FastAPI, Request, UploadFile, WebSocket
+from fastapi import BackgroundTasks, Depends, FastAPI, Request, UploadFile, WebSocket
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
-from .services import Mailer, log_event, notify_user, retrying_notify, stream_rows
+from .services import Item, Mailer, get_session, get_sync_session, log_event, notify_user, retrying_notify, stream_rows
 
 app = FastAPI()
 
@@ -88,3 +91,29 @@ async def upload_sync(file: UploadFile, request):
 
 async def run_with(notify_user):
     notify_user(3)
+
+
+SessionDep = Annotated[AsyncSession, Depends(get_session)]
+
+
+@app.post("/items")
+async def create_item(name: str, db: AsyncSession = Depends(get_session)):
+    item = Item(name=name)
+    db.add(item)
+    db.commit()  # Noncompliant {{Add await before db.commit()}}
+    await db.refresh(item)
+    return item
+
+
+@app.delete("/items/{item_id}")
+async def delete_item(item_id: int, session: SessionDep):
+    item = await session.get(Item, item_id)
+    session.delete(item)  # Noncompliant
+    await session.commit()
+    return {}
+
+
+@app.get("/items/sync")
+def list_items_sync(db: Session = Depends(get_sync_session)):
+    db.commit()
+    return []

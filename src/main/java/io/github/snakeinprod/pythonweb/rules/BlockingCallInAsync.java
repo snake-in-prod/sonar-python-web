@@ -274,7 +274,7 @@ public class BlockingCallInAsync implements PwRule {
   }
 
   /** The type an annotation names, through {@code Annotated[T, ...]} and a module-level alias of it. */
-  private static String annotationType(WebModel model, Module m, List<Node> annotation) {
+  static String annotationType(WebModel model, Module m, List<Node> annotation) {
     for (int hop = 0; hop < 2 && !annotation.isEmpty(); hop++) {
       if (annotation.size() == 2 && Nodes.isIdent(annotation.get(0), "Annotated") && annotation.get(1) instanceof Node.Group g
         && !g.items().isEmpty()) {

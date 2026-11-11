@@ -19,11 +19,14 @@ import java.util.Set;
  * A coroutine created and dropped in an async def: a call on a line of its own, or assigned to a name that is never
  * awaited (later uses only read attributes or items of it). Coroutine calls are project async functions (not
  * decorated, not generators), asyncio.sleep / wait_for / wait, and the async methods of FastAPI's Request, UploadFile
- * and WebSocket parameters.
+ * and WebSocket parameters and of SQLAlchemy / SQLModel AsyncSession parameters (an Annotated alias followed).
  */
 public class MissingAwait implements PwRule {
 
   private static final Set<String> LIBRARY = Set.of("asyncio.sleep", "asyncio.wait_for", "asyncio.wait");
+  /** The coroutine methods of an async SQLAlchemy / SQLModel session ({@code add} and {@code expunge} are plain). */
+  private static final Set<String> SESSION = Set.of("commit", "rollback", "close", "flush", "refresh", "execute", "delete", "merge",
+    "get", "scalar", "scalars", "stream", "exec");
   private static final Map<String, Set<String>> METHODS = Map.of(
     "fastapi.Request", Set.of("json", "body", "form"),
     "starlette.requests.Request", Set.of("json", "body", "form"),
@@ -32,7 +35,9 @@ public class MissingAwait implements PwRule {
     "fastapi.WebSocket", Set.of("accept", "close", "send", "send_text", "send_json", "send_bytes", "receive", "receive_text",
       "receive_json", "receive_bytes"),
     "starlette.websockets.WebSocket", Set.of("accept", "close", "send", "send_text", "send_json", "send_bytes", "receive",
-      "receive_text", "receive_json", "receive_bytes"));
+      "receive_text", "receive_json", "receive_bytes"),
+    "sqlalchemy.ext.asyncio.AsyncSession", SESSION,
+    "sqlmodel.ext.asyncio.session.AsyncSession", SESSION);
 
   @Override
   public void check(RuleContext ctx) {
@@ -77,9 +82,7 @@ public class MissingAwait implements PwRule {
     }
     List<String> names = c.names();
     if (names.size() == 2 && fn.param(names.get(0)) != null && !names.get(0).equals("self")) {
-      List<Node> annotation = fn.param(names.get(0)).annotation();
-      String dotted = Exprs.dotted(annotation);
-      String type = dotted == null ? null : BlockingCallInAsync.imported(m, dotted);
+      String type = BlockingCallInAsync.annotationType(model, m, fn.param(names.get(0)).annotation());
       return type != null && METHODS.getOrDefault(type, Set.of()).contains(names.get(1)) ? head + "()" : null;
     }
     Function callee = BlockingCallInAsync.callee(model, fn, head);

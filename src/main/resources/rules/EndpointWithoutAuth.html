@@ -7,7 +7,9 @@ a <code>fastapi.security</code> scheme, a dependency that reads a credential) on
 <code>user_passes_test</code>, auth mixins, <code>method_decorator</code> on the view or its <code>dispatch</code>,
 wrappers in urls.py, <code>LoginRequiredMiddleware</code>; DRF <code>permission_classes</code>,
 <code>get_permissions</code> and <code>DEFAULT_PERMISSION_CLASSES</code>; Flask <code>login_required</code>,
-<code>jwt_required</code> and similar decorators and <code>before_request</code> guards; a check of the user, a token, a
+<code>jwt_required</code> and similar decorators and <code>before_request</code> guards; aiohttp_security
+<code>check_authorized</code>, <code>check_permission</code> and <code>authorized_userid</code>, an aiohttp_session login
+check and an auth middleware registered on an aiohttp app; a check of the user, a token, a
 key or a signature in the handler or a helper it calls.</p>
 <p>It stays silent for apps that check no caller anywhere, endpoints made open explicitly (<code>AllowAny</code>),
 endpoints that are public by purpose (login, signup, token, password reset, webhooks, callbacks, health), a POST that

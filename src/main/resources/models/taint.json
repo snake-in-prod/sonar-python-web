@@ -50,6 +50,8 @@
     {"kind": "ssrf", "call": "httpx.Client.request|stream", "args": [1], "kwargs": ["url"]},
     {"kind": "ssrf", "call": "httpx.AsyncClient.request|stream", "args": [1], "kwargs": ["url"]},
     {"kind": "ssrf", "call": "urllib.request.urlopen|urlretrieve|Request", "args": [0], "kwargs": ["url"]},
+    {"kind": "ssrf", "call": "urllib.urlopen|urlretrieve", "args": [0], "kwargs": ["url"]},
+    {"kind": "ssrf", "call": "urllib2.urlopen|Request", "args": [0], "kwargs": ["url"]},
     {"kind": "ssrf", "call": "aiohttp.ClientSession.get|post|put|patch|delete|head|options", "args": [0], "kwargs": ["url"]},
     {"kind": "ssrf", "call": "aiohttp.ClientSession.request", "args": [1], "kwargs": ["url"]},
 

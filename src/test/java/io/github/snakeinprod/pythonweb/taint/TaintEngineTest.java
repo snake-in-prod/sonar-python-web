@@ -367,4 +367,46 @@ class TaintEngineTest {
     });
     assertThat(r.findings()).isEmpty();
   }
+
+  @Test
+  void aiohttp_request_inputs() {
+    List<Finding> found = findings("svc/app.py", """
+      import os
+      import subprocess
+
+      from aiohttp import web
+
+      routes = web.RouteTableDef()
+
+      @routes.get("/q")
+      async def query(request):
+          os.system("grep " + request.query["q"])
+          os.system("grep " + request.rel_url.query.get("r"))
+          os.system("grep %d" % int(request.match_info["n"]))
+          return web.Response()
+
+      @routes.post("/{name}")
+      async def write(request):
+          data = await request.post()
+          body = await request.json()
+          name = request.match_info["name"]
+          os.system("touch " + name)
+          os.system("echo " + data["text"])
+          os.system("echo " + body["text"])
+          os.system("echo " + request.headers["X-Tag"] + request.cookies["c"])
+          return web.Response()
+
+      @routes.view("/jobs")
+      class Jobs(web.View):
+          async def post(self):
+              text = await self.request.text()
+              subprocess.run(text, shell=True)
+              return web.Response()
+      """);
+    assertThat(found).allMatch(f -> f.kind().equals("command")).extracting(Finding::label).containsExactlyInAnyOrder(
+      "request.query", "request.rel_url.query", "request.match_info", "request.post", "request.json", "request.headers",
+      "request.cookies", "request.text");
+    assertThat(found).filteredOn(f -> f.label().equals("request.text")).singleElement()
+      .satisfies(f -> assertThat(f.where()).isEqualTo("POST /jobs"));
+  }
 }

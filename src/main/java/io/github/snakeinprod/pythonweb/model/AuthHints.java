@@ -42,7 +42,7 @@ final class AuthHints {
   /** Packages whose import means the app has authentication. */
   private static final List<String> PACKAGES = List.of("django.contrib.auth", "rest_framework.permissions",
     "rest_framework.authentication", "rest_framework_simplejwt", "knox", "allauth", "flask_login", "flask_jwt_extended",
-    "flask_httpauth", "flask_security", "flask_praetorian", "fastapi.security", "fastapi_users", "fastapi_jwt_auth", "jose",
+    "flask_httpauth", "flask_security", "flask_praetorian", "aiohttp_security", "fastapi.security", "fastapi_users", "fastapi_jwt_auth", "jose",
     "jwt", "authlib", "oauthlib");
 
   private static final Set<String> WRITES = Set.of("save", "delete", "create", "bulk_create", "bulk_update", "update_or_create",
@@ -54,7 +54,7 @@ final class AuthHints {
   /** What a project decorator's wrapper checks: current_user, request.user, a 401/403, or an auth decorator inside. */
   private static final Pattern WRAPPER = Pattern.compile("current_user|request\\.user|g\\.user|session\\[|session\\.get\\(|"
     + "login_required|is_authenticated|abort\\((401|403)|status=40[13]|status_code=40[13]|HTTP_40[13]|PermissionDenied|"
-    + "Unauthorized|Forbidden|verify_jwt|jwt_required|get_jwt_identity");
+    + "Unauthorized|Forbidden|verify_jwt|jwt_required|get_jwt_identity|check_authorized|check_permission");
 
   /**
    * The decorator names a project function whose code checks the caller: {@code @require_perm(P.EDIT)} defined as a

@@ -15,7 +15,7 @@ import java.util.TreeSet;
 
 /**
  * The project model: every Python file as a {@link Module}, the frameworks they import, the endpoints of the FastAPI,
- * Django (REST framework included) and Flask apps, and name resolution across modules. Built once per analysis.
+ * Django (REST framework included), Flask and aiohttp apps, and name resolution across modules. Built once per analysis.
  */
 public final class WebModel {
 
@@ -65,6 +65,9 @@ public final class WebModel {
     if (model.frameworks.contains(Framework.FLASK)) {
       model.endpoints.addAll(FlaskRoutes.find(model));
     }
+    if (model.frameworks.contains(Framework.AIOHTTP)) {
+      model.endpoints.addAll(AiohttpRoutes.find(model));
+    }
     for (Endpoint e : model.endpoints) {
       if (e.function() != null) {
         model.byFunction.computeIfAbsent(e.function(), k -> new ArrayList<>()).add(e);
@@ -96,7 +99,7 @@ public final class WebModel {
     return frameworks;
   }
 
-  /** At least one of Django, DRF, FastAPI, Flask is imported. */
+  /** At least one of Django, DRF, FastAPI, Flask, aiohttp is imported. */
   public boolean hasFramework() {
     return !frameworks.isEmpty();
   }

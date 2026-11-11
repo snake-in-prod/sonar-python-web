@@ -6,6 +6,7 @@ import io.github.snakeinprod.pythonweb.parse.Chains;
 import io.github.snakeinprod.pythonweb.parse.Node;
 import io.github.snakeinprod.pythonweb.parse.Nodes;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -22,7 +23,7 @@ import java.util.regex.Pattern;
  * {@code include("app.urls")}, inline lists and DRF routers ({@code router.register(...)}, {@code include(router.urls)},
  * {@code urlpatterns += router.urls}). Views: functions, class-based views ({@code as_view()}) with one endpoint per
  * handler method and one for the methods a generic base provides, ViewSets with one endpoint per action and per
- * {@code @action}.
+ * {@code @action}. View classes a register decorator files in a registry, expanded by a URL helper reading it.
  */
 final class DjangoRoutes {
 
@@ -57,6 +58,7 @@ final class DjangoRoutes {
     Map.entry("RetrieveUpdateAPIView", List.of("GET", "PUT", "PATCH")), Map.entry("RetrieveDestroyAPIView", List.of("GET", "DELETE")),
     Map.entry("RetrieveUpdateDestroyAPIView", List.of("GET", "PUT", "PATCH", "DELETE")));
 
+  private static final Pattern SUBSCRIPT = Pattern.compile("\\b([A-Za-z_]\\w*)\\[");
   private static final Pattern METHOD_CHECK = Pattern.compile("request\\.method(?:==|!=| in| not in)[(\\[{]?((?:[\"'][A-Za-z]+[\"'],?)+)");
 
   private final WebModel model;
@@ -66,6 +68,7 @@ final class DjangoRoutes {
   private boolean loginMiddleware;
   private final Set<String> expanding = new HashSet<>();
   private final Set<Module> reached = new HashSet<>();
+  private List<Registration> registrations;
 
   private DjangoRoutes(WebModel model) {
     this.model = model;
@@ -341,6 +344,8 @@ final class DjangoRoutes {
       Chain a = arg == null ? null : Exprs.chain(arg);
       if (arg != null && arg.size() == 1 && arg.get(0) instanceof Node.Group g && g.is("[")) {
         patterns(m, arg, path, wrapper, visiting);
+      } else if (a != null && a.endsWithCall() && registered(m, a, path, wrapper)) {
+        return;
       } else if (a != null && Exprs.head(a).endsWith(".urls") && !a.endsWithCall()) {
         router(m, Exprs.head(a), path, wrapper);
       } else {
@@ -374,6 +379,126 @@ final class DjangoRoutes {
     if (f != null) {
       functionView(f, path, wrapper, null);
     }
+  }
+
+  /**
+   * A view class a project decorator files in a registry: {@code @register_model_view(Site, "edit", path="x")}, with
+   * the lower-case names of the project classes it passes and the directories of their modules.
+   */
+  private record Registration(Function decorator, PyClass view, Map<String, List<Node>> args, Set<String> names, Set<String> dirs) {
+  }
+
+  private List<Registration> registrations() {
+    if (registrations == null) {
+      registrations = new ArrayList<>();
+      for (Module m : model.modules()) {
+        for (PyClass cls : m.isTest() ? List.<PyClass>of() : m.classes()) {
+          for (Decorator d : cls.decorators()) {
+            Function f = d.call() != null && d.last().toLowerCase(Locale.ROOT).contains("register") ? model.function(m, d.name()) : null;
+            if (f != null && model.externalBases(cls).stream().anyMatch(b -> b.startsWith("django.views") || b.startsWith("rest_framework"))) {
+              registrations.add(registration(f, cls, bind(f, d.call())));
+            }
+          }
+        }
+      }
+    }
+    return registrations;
+  }
+
+  /**
+   * {@code include(get_model_urls("dcim", "site", detail=False))}: a project function that reads the registry a
+   * register decorator fills gives the views registered for that key. A registration matches when the arguments both
+   * functions name alike are equal (defaults included) and each other string names the registered model (its class
+   * name in lower case) or a directory of the model's module (the app). The route is the decorator's {@code path},
+   * else its {@code name}. False when nothing matches.
+   */
+  private boolean registered(Module m, Chain c, String prefix, String wrapper) {
+    Function helper = model.function(m, Exprs.head(c));
+    if (helper == null || Exprs.firstCall(c) == null) {
+      return false;
+    }
+    Map<String, List<Node>> given = bind(helper, Exprs.firstCall(c));
+    boolean any = false;
+    Map<Function, Boolean> shared = new HashMap<>();
+    for (Registration r : registrations()) {
+      String route = registeredRoute(r);
+      if (route != null && shared.computeIfAbsent(r.decorator(), d -> sharesRegistry(d, helper)) && matches(r, given)) {
+        classView(r.view(), prefix + (route.isEmpty() ? "" : route + "/"), wrapper, null);
+        any = true;
+      }
+    }
+    return any;
+  }
+
+  private static String registeredRoute(Registration r) {
+    String path = Exprs.string(r.args().get("path"));
+    return path != null ? path : Exprs.string(r.args().get("name"));
+  }
+
+  private Registration registration(Function decorator, PyClass view, Map<String, List<Node>> args) {
+    Set<String> names = new HashSet<>();
+    Set<String> dirs = new HashSet<>();
+    for (List<Node> v : args.values()) {
+      String d = Exprs.dotted(v);
+      PyClass k = d == null ? null : model.cls(view.module(), d);
+      if (k != null && k != view) {
+        names.add(k.name().toLowerCase(Locale.ROOT));
+        String p = k.module().path();
+        dirs.addAll(List.of(p.substring(0, Math.max(0, p.lastIndexOf('/'))).split("/")));
+      }
+    }
+    return new Registration(decorator, view, args, names, dirs);
+  }
+
+  private static boolean matches(Registration r, Map<String, List<Node>> given) {
+    Set<String> names = r.names();
+    Set<String> dirs = r.dirs();
+    boolean named = false;
+    for (Map.Entry<String, List<Node>> e : given.entrySet()) {
+      List<Node> mine = r.args().get(e.getKey());
+      String s = Exprs.string(e.getValue());
+      if (mine != null) {
+        if (!Exprs.text(mine).equals(Exprs.text(e.getValue()))) {
+          return false;
+        }
+      } else if (s == null || !names.contains(s) && !dirs.contains(s)) {
+        return false;
+      } else {
+        named |= names.contains(s);
+      }
+    }
+    return named;
+  }
+
+  /** Both functions read or write the same module-level subscripted name ({@code registry["views"]}). */
+  private static boolean sharesRegistry(Function decorator, Function helper) {
+    String helperText = AuthHints.bodyText(helper);
+    Matcher mm = SUBSCRIPT.matcher(AuthHints.bodyText(decorator));
+    while (mm.find()) {
+      String n = mm.group(1);
+      String resolved = decorator.module().resolve(n);
+      boolean global = !resolved.equals(n) || decorator.module() == helper.module() && decorator.module().assignments().containsKey(n);
+      if (global && helperText.contains(n + "[") && resolved.equals(helper.module().resolve(n))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Parameter name to the argument a call passes, else the parameter's default. */
+  private static Map<String, List<Node>> bind(Function f, Chain.Call call) {
+    Map<String, List<Node>> out = new LinkedHashMap<>();
+    List<List<Node>> positional = Exprs.positional(call);
+    Map<String, List<Node>> kwargs = Exprs.kwargs(call);
+    List<Function.Param> params = f.params().stream().filter(p -> p.stars() == 0).toList();
+    for (int i = 0; i < params.size(); i++) {
+      Function.Param p = params.get(i);
+      List<Node> v = kwargs.containsKey(p.name()) ? kwargs.get(p.name()) : i < positional.size() ? positional.get(i) : p.defaultValue();
+      if (!v.isEmpty()) {
+        out.put(p.name(), v);
+      }
+    }
+    return out;
   }
 
   private Module includedModule(Module m, List<Node> arg) {

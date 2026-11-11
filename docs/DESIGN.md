@@ -67,12 +67,14 @@ above the file (deepest first) and its `src/`, so a Django app beside manage.py 
 
 ### Endpoints
 
-- FastAPI: `FastAPI()` and `APIRouter(prefix=..., dependencies=[...])` objects (module level or in a factory),
+- FastAPI: `FastAPI()` and `APIRouter(prefix=..., dependencies=[...])` objects (module level or in a factory; a
+  project alias named `...Router` or a project subclass of APIRouter too),
   `@x.get/post/put/patch/delete/options/head/api_route(...)`, `include_router(router, prefix=..., dependencies=[...])`
   followed up to the app. Auth: a `Depends(...)` whose callable says auth by its name (get_current_user, oauth2_scheme,
   require_admin, current_session...), any `Security(...)`, a `fastapi.security` scheme, an `Annotated[..., Depends(...)]`
-  alias, or a project dependency that is defined in an auth module, reads a credential cookie or header, or itself
-  depends on one of those; on the route, a parameter, a router, an include or the app.
+  alias, a project dependency that is defined in an auth module, reads a credential cookie or header, or itself
+  depends on one of those, or a module-level instance (`_Write = Authenticator(...)`) of an auth-named class or defined
+  in an auth module; on the route, a parameter, a router, an include or the app.
 - Django: from ROOT_URLCONF (else every urlconf no other includes), `path` / `re_path` / `url` entries, `include()`
   of modules, inline lists and DRF routers. Function views (methods from `require_POST`, `require_http_methods`,
   `api_view`, else from `request.method` checks, else ANY), class-based views (one endpoint per handler method, one
@@ -81,8 +83,13 @@ above the file (deepest first) and its `src/`, so a Django app beside manage.py 
   `method_decorator`, auth mixins, `permission_classes` (AllowAny means open), DRF DEFAULT_PERMISSION_CLASSES,
   LoginRequiredMiddleware, checks of `request.user` in the body.
 - Flask: `Flask()` apps and `Blueprint(url_prefix=...)`, `@x.route(rule, methods=[...])`, `@x.get/post/...`,
-  `add_url_rule`, `register_blueprint(url_prefix=...)`. Auth: decorators (`login_required`, `jwt_required`...), checks
-  in the body, `before_request` guards of the blueprint or the app whose body checks the user.
+  `add_url_rule`, a project helper called with a blueprint and `view_func=` (`register_view(bp, routes=[...],
+  view_func=V.as_view(...))`), `register_blueprint(url_prefix=...)`; `MethodView.as_view` gives one endpoint per verb
+  method. Flask-RESTful / RESTX: `Api()` (or a project subclass), `api.add_resource(Resource, "/url", ...)` and any
+  project method of the subclass taking the resource first. A rule wrapped in a helper (`org_scoped_rule("/x")`) reads
+  as its literal. Auth: decorators (`login_required`, `jwt_required`...), a view class's `decorators` /
+  `method_decorators`, checks in the body, `before_request` guards of the blueprint or the app whose body checks the
+  user and can stop the request (abort, redirect, raise, return a response; a hook that only loads `g.user` is not one).
 
 ## The taint engine (package `taint`)
 

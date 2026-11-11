@@ -18,3 +18,13 @@ class Credentials(BaseModel):
 class Login(BaseModel):
     email: str
     password: str = Field(exclude=True)
+
+
+class PaymentIntent(BaseModel):
+    id: int
+    client_secret: str
+
+
+class WebhookEndpoint(BaseModel):
+    url: str
+    secret: str

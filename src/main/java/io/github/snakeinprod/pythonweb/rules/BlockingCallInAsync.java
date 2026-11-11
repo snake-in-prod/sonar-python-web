@@ -248,6 +248,15 @@ public class BlockingCallInAsync implements PwRule {
         List<List<Node>> parts = Exprs.assignment(nodes);
         if (parts.size() == 2 && parts.get(0).size() == 1) {
           client(m, parts.get(1), Nodes.leaf(parts.get(0).get(0)), out);
+          // session = make_session(...) where the project function is declared -> Session
+          Chain c = Exprs.chain(parts.get(1));
+          Function maker = c != null && c.segments().size() == Exprs.headSize(c) + 1 && Exprs.firstCall(c) != null
+            ? model.function(m, Exprs.head(c)) : null;
+          String t = maker == null || maker.isAsync() ? null : annotationType(model, maker.module(), maker.returns());
+          Token name = Nodes.leaf(parts.get(0).get(0));
+          if (t != null && SESSIONS.contains(t) && name != null) {
+            out.put(name.text(), t);
+          }
         }
       }
     }

@@ -2,8 +2,8 @@ from fastapi import Depends, FastAPI
 from sqlalchemy import select
 
 from . import crud
-from .models import Device, Item, User
-from .schemas import Credentials, Login, UserInDB, UserOut
+from .models import Device, Integration, Item, User
+from .schemas import Credentials, Login, PaymentIntent, UserInDB, UserOut, WebhookEndpoint
 
 app = FastAPI()
 
@@ -118,3 +118,21 @@ def device(device_id: int, db=Depends(get_db)):
 @app.get("/users/{user_id}/email")
 def user_email(user_id: int, db=Depends(get_db)):
     return db.get(User, user_id).email
+
+
+# a schema that declares a client secret or a webhook secret is made to send it
+
+
+@app.post("/payments", response_model=PaymentIntent)
+def create_payment(db=Depends(get_db)):
+    return PaymentIntent(id=1, client_secret="x")
+
+
+@app.get("/webhooks/{id}", response_model=WebhookEndpoint)
+def read_webhook(id: int, db=Depends(get_db)):
+    return None
+
+
+@app.get("/integrations/{id}")
+def read_integration(id: int, db=Depends(get_db)):
+    return db.get(Integration, id)

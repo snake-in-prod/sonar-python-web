@@ -1,0 +1,32 @@
+<p>A view that changes data for a user signed in by a session cookie has its CSRF protection turned off. The browser
+sends the cookie with every request, so any page the user visits can submit a form or a script request to this view and
+act as the user.</p>
+<p>Reported: Django <code>@csrf_exempt</code> (on the function, through <code>method_decorator</code> on the class or
+its <code>dispatch</code>, or as <code>csrf_exempt(view)</code> in urls.py) and Flask-WTF <code>@csrf.exempt</code>, on
+a view that accepts POST, PUT, PATCH or DELETE (or any method), writes data, and either requires a session login
+(<code>login_required</code>, an auth mixin, a <code>request.user</code> or <code>current_user</code> check) or acts on
+<code>request.user</code>.</p>
+<p>Not reported: views that authenticate by a token, an API key, an <code>Authorization</code> header or a signature
+(webhooks), Django REST framework views (DRF enforces CSRF itself for session authentication), views that only read,
+and views that accept only GET.</p>
+<h2>Noncompliant code example</h2>
+<pre>
+@csrf_exempt
+@login_required
+def transfer(request):  # Noncompliant
+    Account.objects.filter(owner=request.user).update(balance=0)
+</pre>
+<h2>Compliant solution</h2>
+<pre>
+@login_required
+@require_POST
+def transfer(request):
+    Account.objects.filter(owner=request.user).update(balance=0)
+</pre>
+<p>Send the CSRF token with script requests (the <code>X-CSRFToken</code> header) instead of turning the check off.</p>
+<h2>Resources</h2>
+<ul>
+  <li><a href="https://owasp.org/www-community/attacks/csrf">OWASP - Cross Site Request Forgery</a></li>
+  <li><a href="https://cwe.mitre.org/data/definitions/352.html">CWE-352 - Cross-Site Request Forgery</a></li>
+  <li><a href="https://docs.djangoproject.com/en/stable/howto/csrf/">Django - How to use CSRF protection</a></li>
+</ul>

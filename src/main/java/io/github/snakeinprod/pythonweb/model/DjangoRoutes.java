@@ -439,7 +439,9 @@ final class DjangoRoutes {
       }
       for (String m : List.of("get_permissions", "dispatch", "initial", "check_permissions")) {
         Function f = k.method(m);
-        if (f != null && (m.equals("get_permissions") || AuthHints.BODY.matcher(AuthHints.bodyText(f)).find())) {
+        if (f != null && (m.equals("get_permissions") || AuthHints.BODY.matcher(AuthHints.bodyText(f)).find()
+          || f.decorators().stream().anyMatch(d -> AuthHints.DECORATOR.matcher(d.name()).find() || d.last().equals("method_decorator")
+            && d.call() != null && AuthHints.DECORATOR.matcher(Exprs.text(orEmpty(Exprs.arg(d.call(), 0, null)))).find()))) {
           return Endpoint.Auth.by(k.name() + "." + m);
         }
       }

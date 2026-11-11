@@ -1,6 +1,8 @@
 <p>Template engines escape what they render. Request data that skips the escaping is cross-site scripting: passed
 to Django <code>mark_safe</code> or <code>markupsafe.Markup</code>, put in an <code>HTMLResponse</code>, or returned in a
-string by a FastAPI endpoint declared with <code>response_class=HTMLResponse</code>. Request data used as the template
+string by a FastAPI endpoint declared with <code>response_class=HTMLResponse</code>, or returned by a Flask view in a
+string holding an HTML tag (<code>return f"&lt;h1&gt;Hello {name}&lt;/h1&gt;"</code>: Flask sends a string as
+<code>text/html</code>). Request data used as the template
 source itself (<code>render_template_string</code>, <code>jinja2.Template</code>, <code>Environment.from_string</code>,
 <code>django.template.Template</code>) is worse: template injection runs code on the server.</p>
 <p>The issue names the endpoint the data comes in through and shows its path to the call.</p>

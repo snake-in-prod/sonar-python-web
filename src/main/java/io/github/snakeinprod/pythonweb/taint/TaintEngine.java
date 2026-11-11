@@ -826,7 +826,7 @@ public final class TaintEngine {
       for (int i = from; i < segs.size() && !t.isEmpty(); i++) {
         if (segs.get(i) instanceof Chain.Name n && i + 1 < segs.size() && segs.get(i + 1) instanceof Chain.Call) {
           String name = n.token().text();
-          if (models.cleanMethods.contains(name)) {
+          if (models.cleanMethods.contains(name) || numberType((Chain.Call) segs.get(i + 1))) {
             return Taint.EMPTY;
           }
           Set<String> kinds = models.sanitizer("*." + name, name, true);
@@ -834,6 +834,12 @@ public final class TaintEngine {
         }
       }
       return t;
+    }
+
+    /** {@code request.args.get("page", type=int)}: werkzeug converts the value, or gives the default. */
+    private static boolean numberType(Chain.Call call) {
+      List<Node> type = Exprs.kwargs(call).get("type");
+      return type != null && Set.of("int", "float", "bool").contains(Exprs.text(type));
     }
 
     /** The value of a call: a project function's summary, a sanitizer, a propagator, else clean. */

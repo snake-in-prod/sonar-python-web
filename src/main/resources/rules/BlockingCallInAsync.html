@@ -1,0 +1,36 @@
+<p>An <code>async def</code> endpoint runs on the server's event loop together with every other request. A blocking call
+there (an HTTP request with <code>requests</code> or a sync <code>httpx</code> client, <code>time.sleep</code>, opening a
+file, a synchronous database driver or SQLAlchemy <code>Session</code>, the Django ORM, a subprocess) stops the loop
+until it returns: every other request waits. The Django ORM also raises <code>SynchronousOnlyOperation</code> in async
+code.</p>
+<p>The rule checks async FastAPI and Django endpoints, the async project functions they call, and the sync project
+functions those call directly (the issue is then on the call, with the way to the blocking call as secondary
+locations; a local file read in such a helper is not reported). Calls that are awaited, passed to
+<code>asyncio.to_thread</code>, <code>sync_to_async</code>, <code>run_in_threadpool</code> or
+<code>run_in_executor</code>, or inside a lambda are not blocking. Flask runs each async view in its own event loop, so
+its views are not checked.</p>
+<h2>Noncompliant code example</h2>
+<pre>
+@app.get("/rate")
+async def rate():
+    return requests.get(RATES_URL).json()  # Noncompliant
+
+async def item_detail(request, pk):
+    item = Item.objects.get(pk=pk)  # Noncompliant
+</pre>
+<h2>Compliant solution</h2>
+<pre>
+@app.get("/rate")
+async def rate():
+    async with httpx.AsyncClient() as client:
+        return (await client.get(RATES_URL)).json()
+
+async def item_detail(request, pk):
+    item = await Item.objects.aget(pk=pk)
+</pre>
+<p>Or declare the endpoint with a plain <code>def</code>: FastAPI then runs it in a worker thread.</p>
+<h2>Resources</h2>
+<ul>
+  <li><a href="https://fastapi.tiangolo.com/async/">FastAPI: Concurrency and async / await</a></li>
+  <li><a href="https://docs.djangoproject.com/en/stable/topics/async/">Django: Asynchronous support</a></li>
+</ul>

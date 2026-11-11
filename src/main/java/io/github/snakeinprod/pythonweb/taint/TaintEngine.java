@@ -45,6 +45,13 @@ public final class TaintEngine {
   private static final Set<String> AUGMENTED = Set.of("+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "//=", "@=");
   private static final Set<String> SKIPPED = Set.of("pass", "break", "continue", "global", "nonlocal", "import", "from", "del");
   private static final Pattern PATH_PARAM = Pattern.compile("<(?:(\\w+)(?:\\([^>]*\\))?:)?(\\w+)>|\\{(\\w+)(?::\\w+)?}");
+  /** A literal start that fixes where a URL goes: "https://host/", "/items/", "?q=", "&page=", "items/". */
+  private static final Pattern FIXED_TARGET = Pattern.compile("^(?:[A-Za-z][A-Za-z0-9+.-]*://[^/?#\\\\@\\s]+[/?#]|/[^/\\\\]|[?#&]|[\\w.-]+/)");
+  private static final Set<String> URL_KINDS = Set.of("ssrf", "redirect");
+  /** FastAPI parameter types that cannot carry text: such parameters are not inputs. */
+  private static final Set<String> SCALARS = Set.of("int", "float", "bool", "UUID", "UUID1", "UUID4", "Decimal", "date",
+    "datetime", "time", "timedelta", "PositiveInt", "NegativeInt", "NonNegativeInt", "NonPositiveInt", "PositiveFloat",
+    "StrictInt", "StrictFloat", "StrictBool", "conint", "confloat");
 
   private final WebModel model;
   private final TaintModels models;
@@ -188,7 +195,7 @@ public final class TaintEngine {
             String alias = Exprs.dotted(p.annotation());
             List<Node> aliased = alias == null ? null : model.value(m, alias);
             if (p.stars() == 0 && !isRequest(p) && !text.contains("Depends(") && !text.contains("Security(")
-              && !models.notInputs.contains(lastName(p.annotationText()))
+              && !models.notInputs.contains(lastName(p.annotationText())) && !SCALARS.contains(scalar(p.annotationText()))
               && (aliased == null || !Exprs.text(aliased).contains("Depends("))) {
               out.add(p.name());
             }
@@ -531,7 +538,9 @@ public final class TaintEngine {
         }
         out = out.union(v);
       }
-      return out;
+      // f"https://api.example/items/{x}", "/items/" + x: the literal start fixes the host, x cannot move the URL
+      Token lead = Nodes.leaf(nodes.get(0));
+      return lead != null && lead.kind() == TokenKind.STRING && fixesTarget(lead.text()) ? out.clear(URL_KINDS) : out;
     }
 
     /** A bracketed expression, list, tuple, set, dict or comprehension: the union of its parts. */
@@ -579,16 +588,22 @@ public final class TaintEngine {
         return Taint.EMPTY;
       }
       Taint out = Taint.EMPTY;
-      int i = q;
+      // the text before each field, clean fields as "x": f"https://{region}.example/{key}" fixes the host before key
+      StringBuilder before = new StringBuilder();
+      int i = q + (text.startsWith("\"\"\"", q) || text.startsWith("'''", q) ? 3 : 1);
       while (i < text.length()) {
         char c = text.charAt(i);
         if (c == '{' && i + 1 < text.length() && text.charAt(i + 1) == '{') {
+          before.append('{');
           i += 2;
         } else if (c == '{') {
           int end = fieldEnd(text, i + 1);
-          out = out.union(field(t, text, i + 1, end, env));
+          Taint v = field(t, text, i + 1, end, env);
+          out = out.union(!v.isEmpty() && FIXED_TARGET.matcher(before).find() ? v.clear(URL_KINDS) : v);
+          before.append('x');
           i = end + 1;
         } else {
+          before.append(c);
           i++;
         }
       }
@@ -995,6 +1010,31 @@ public final class TaintEngine {
   private static String lastName(String dotted) {
     String s = dotted.replaceAll("[\\[\\](),|].*", "");
     return s.substring(s.lastIndexOf('.') + 1);
+  }
+
+  /** Whether a string token's text before its first field, %, or quote fixes a URL's host (see {@link #FIXED_TARGET}). */
+  static boolean fixesTarget(String text) {
+    int q = 0;
+    while (q < text.length() && Character.isLetter(text.charAt(q))) {
+      q++;
+    }
+    int from = Math.min(text.length(), q + (text.startsWith("\"\"\"", q) || text.startsWith("'''", q) ? 3 : 1));
+    int to = from;
+    while (to < text.length() && "{%'\"".indexOf(text.charAt(to)) < 0) {
+      to++;
+    }
+    return FIXED_TARGET.matcher(text.substring(from, to)).find();
+  }
+
+  /** The base type of an annotation: "int" for int, Optional[int], int | None, Annotated[int, Query()]. */
+  private static String scalar(String annotation) {
+    String a = annotation.replaceFirst("^(?:typing\\.)?(?:Annotated|Optional)\\[", "");
+    int cut = 0;
+    while (cut < a.length() && (Character.isLetterOrDigit(a.charAt(cut)) || a.charAt(cut) == '_' || a.charAt(cut) == '.')) {
+      cut++;
+    }
+    String head = a.substring(0, cut);
+    return head.substring(head.lastIndexOf('.') + 1);
   }
 
   private static int indexOfIdent(List<Node> nodes, String ident) {

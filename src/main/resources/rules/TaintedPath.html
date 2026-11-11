@@ -1,0 +1,47 @@
+<p>Request data that ends up in a file path given to <code>open()</code>, <code>aiofiles.open()</code>, the pathlib
+<code>read_text</code> / <code>read_bytes</code> / <code>write_text</code> / <code>write_bytes</code> / <code>unlink</code> methods,
+Flask <code>send_file</code>, a <code>FileResponse</code>, <code>os.remove</code> or <code>shutil.rmtree</code> lets a caller
+pick another file with <code>../</code> or an absolute path. They can then read secrets, overwrite code or delete data.
+<code>os.path.join(BASE, name)</code> does not help: an absolute <code>name</code> replaces <code>BASE</code>.</p>
+<p>The issue names the endpoint the data comes in through and shows its path to the call, across functions and
+modules.</p>
+<h2>Noncompliant code example</h2>
+<pre>
+@app.route("/files/&lt;path:name&gt;")
+def download(name):
+    return send_file(os.path.join(UPLOADS, name))  # Noncompliant
+
+@router.post("/upload")
+async def upload(file: UploadFile):
+    (BASE / file.filename).write_bytes(await file.read())  # Noncompliant: the client picks the file name
+</pre>
+<h2>Compliant solution</h2>
+<pre>
+@app.route("/files/&lt;path:name&gt;")
+def download(name):
+    return send_from_directory(UPLOADS, name)
+
+@router.post("/upload")
+async def upload(file: UploadFile):
+    target = (BASE / secure_filename(file.filename)).resolve()
+    if not target.is_relative_to(BASE):
+        raise HTTPException(400)
+    target.write_bytes(await file.read())
+</pre>
+<h2>When the rule stays silent</h2>
+<ul>
+  <li>The value went through <code>os.path.basename</code>, <code>secure_filename</code>, <code>safe_join</code>,
+    <code>int()</code> or another cast.</li>
+  <li>A condition on the way checks the path: <code>startswith</code>, <code>is_relative_to</code>,
+    <code>os.path.commonpath</code>, <code>realpath</code> / <code>abspath</code> / <code>resolve()</code> compared, or a test
+    for <code>".."</code>.</li>
+  <li>The value is a URL path parameter whose converter cannot match <code>/</code> (Django and Flask <code>str</code>,
+    FastAPI without <code>:path</code>), or a FastAPI parameter typed <code>int</code>, <code>UUID</code> and the like.</li>
+  <li>The value comes from a model class that validates its fields (a Pydantic <code>field_validator</code>,
+    <code>validator</code> or <code>model_validator</code>): the rule cannot tell what the validators let through.</li>
+</ul>
+<h2>Resources</h2>
+<ul>
+  <li><a href="https://owasp.org/www-community/attacks/Path_Traversal">OWASP: Path Traversal</a></li>
+  <li><a href="https://cwe.mitre.org/data/definitions/22.html">CWE-22: Improper Limitation of a Pathname to a Restricted Directory</a></li>
+</ul>

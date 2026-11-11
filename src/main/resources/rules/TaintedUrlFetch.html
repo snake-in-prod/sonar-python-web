@@ -1,0 +1,38 @@
+<p>Request data used as the URL of an outgoing request (<code>requests</code>, a <code>requests.Session</code>,
+<code>httpx</code> and its clients, <code>urllib.request</code>, an <code>aiohttp.ClientSession</code>) lets a caller make
+the server call any host: internal services, cloud metadata endpoints, admin interfaces behind the firewall. This is
+server-side request forgery (SSRF).</p>
+<p>The issue names the endpoint the data comes in through and shows its path to the call.</p>
+<h2>Noncompliant code example</h2>
+<pre>
+@router.get("/preview")
+async def preview(url: str):
+    return httpx.get(url).text  # Noncompliant
+</pre>
+<h2>Compliant solution</h2>
+<pre>
+ALLOWED_HOSTS = {"images.partner.example"}
+
+@router.get("/preview")
+async def preview(url: str):
+    if urlparse(url).hostname not in ALLOWED_HOSTS:
+        raise HTTPException(400)
+    return httpx.get(url).text
+</pre>
+<h2>When the rule stays silent</h2>
+<ul>
+  <li>The URL starts with a literal that fixes the host: <code>f"https://api.example/users/{user_id}"</code>,
+    <code>"https://api.example/" + path</code>, or a relative <code>"/items/..."</code> on a client with a base URL.</li>
+  <li>A condition on the way checks the host: <code>netloc</code>, <code>hostname</code>, an allow-list
+    (<code>url in ALLOWED</code>, a name with allowed, trusted, safe), or a <code>"https://host"</code> prefix.</li>
+  <li>A URL check helper runs on the way: <code>validate_url(url)</code>, <code>check_host(...)</code>, anything named
+    after SSRF.</li>
+  <li>Only administrators reach the endpoint (<code>Depends(get_admin_user)</code>, <code>staff_member_required</code>,
+    an admin permission class): they configure the services the server calls.</li>
+  <li>The request data only goes to <code>params=</code>, <code>json=</code> or the body.</li>
+</ul>
+<h2>Resources</h2>
+<ul>
+  <li><a href="https://owasp.org/www-community/attacks/Server_Side_Request_Forgery">OWASP: Server Side Request Forgery</a></li>
+  <li><a href="https://cwe.mitre.org/data/definitions/918.html">CWE-918: Server-Side Request Forgery (SSRF)</a></li>
+</ul>

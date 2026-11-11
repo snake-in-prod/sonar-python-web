@@ -544,7 +544,7 @@ window.registerExtension('pythonweb/pythonweb', function (options) {
 
   // open issues of the plugin's rules, coloured by type: vulnerabilities red, bugs orange, code smells grey
   var TYPE_COLOR = {VULNERABILITY: 'var(--red)', BUG: 'var(--orange)'};
-  api('rules/search', {repositories: REPO, f: 'name,types', ps: 500}, false).then(function (data) {
+  api('rules/search', {repositories: REPO, f: 'name', ps: 500}, false).then(function (data) {
     var rules = {};
     (data.rules || []).forEach(function (r) { rules[r.key] = r; });
     if (Object.keys(rules).length === 0) {

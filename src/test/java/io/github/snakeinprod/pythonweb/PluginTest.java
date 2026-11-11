@@ -12,6 +12,8 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 import org.sonar.api.issue.impact.Severity;
 import org.sonar.api.issue.impact.SoftwareQuality;
@@ -78,6 +80,10 @@ class PluginTest {
       assertThat(js).contains("options.el.style.gridColumn = '1 / -1'", "options.el.style.width = '100%'", "aria-label",
         "createElementNS", "'pw_endpoints_json'", "'pw_app_json'", "branchLike", "'pythonweb-python'")
         .doesNotContain("container-type", "innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(");
+      // api/rules/search answers HTTP 400 to a field it does not know in f (type comes back without asking)
+      Matcher f = Pattern.compile("rules/search', \\{[^}]*\\bf: '([^']*)'").matcher(js);
+      assertThat(f.find()).isTrue();
+      assertThat(f.group(1).split(",")).isSubsetOf("name", "lang", "repo", "severity", "status", "sysTags", "tags");
     }
   }
 }

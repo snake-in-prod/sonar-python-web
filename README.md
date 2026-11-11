@@ -44,7 +44,7 @@ so activate the rules in your own profile, or extend "Python Web").
 
 ## Measures
 
-pw_endpoints, pw_mutating_endpoints, pw_unprotected_endpoints, pw_async_endpoints, pw_blocking_calls,
+pw_endpoints, pw_mutating_endpoints, pw_unprotected_endpoints (the endpoints EndpointWithoutAuth reports), pw_async_endpoints, pw_blocking_calls,
 pw_taint_findings, and pw_endpoints_json (every endpoint with its path, methods, framework, function, auth, async flag
 and issues) for the "Python Web" project page.
 

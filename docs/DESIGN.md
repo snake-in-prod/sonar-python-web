@@ -89,8 +89,13 @@ above the file (deepest first) and its `src/`, so a Django app beside manage.py 
   `permission_classes`...), a project decorator that tests the user or reads a credential and answers 401/403, or
   whose wrapper checks the caller (`@require_perm(P.EDIT)` testing `current_user`), wrappers in urls.py,
   `method_decorator`, auth mixins, `permission_classes` (AllowAny means open), DRF DEFAULT_PERMISSION_CLASSES,
-  LoginRequiredMiddleware, checks of `request.user` in the body, a dispatcher that checks the user. Registries the
-  code fills at run time (a `@register_view(Model)` decorator read by a URL builder) are not followed.
+  LoginRequiredMiddleware, checks of `request.user` in the body, a dispatcher that checks the user. View registries:
+  a view class decorated by a project decorator whose name holds "register" (`@register_model_view(Site, "edit",
+  path="x", detail=False)`), and a project function in `include(...)` that reads the same module-level registry
+  (`include(get_model_urls("dcim", "site", detail=False))`, both subscripting `registry[...]`), give the class's
+  endpoints under that prefix. A registration matches when the arguments both functions name alike are equal
+  (defaults included) and every other string of the call is the registered model's class name in lower case or a
+  directory of its module; the route is the decorator's `path`, else its `name`.
 - Flask: `Flask()` apps (also `application = create_app()` with a project factory) and `Blueprint(url_prefix=...)`,
   `@x.route(rule, methods=[...])`, `@x.get/post/...`, `add_url_rule`, a project helper called with a blueprint and
   `view_func=` (`register_view(bp, routes=[...], view_func=V.as_view(...))`), `register_blueprint(url_prefix=...)`;
@@ -198,11 +203,12 @@ An issue must be a real defect in at least 9 of 10 cases on real public apps (`c
 
 ## Measures
 
-On files: pw_endpoints, pw_mutating_endpoints, pw_async_endpoints (from the model), pw_unprotected_endpoints (issues
-of EndpointWithoutAuth), pw_blocking_calls (issues of BlockingCallInAsync), pw_taint_findings (issues of the rules
+On files: pw_endpoints, pw_mutating_endpoints, pw_async_endpoints (from the model), pw_unprotected_endpoints (the
+endpoints EndpointWithoutAuth reports: an issue of that rule on the handler; several endpoints of one handler or class
+share one issue), pw_blocking_calls (issues of BlockingCallInAsync), pw_taint_findings (issues of the rules
 with a sink kind); `PwAggregator` sums them. pw_endpoints_json, on the project: one object per endpoint with `path`,
 `methods`, `framework` (django, drf, fastapi, flask), `function`, `file`, `line`, `auth` (the evidence or null),
-`protected`, `async`, `mutating`, `issues` (within the handler's lines). pw_app_json: the file measures summed over
+`protected`, `unprotected`, `async`, `mutating`, `issues` (within the handler's lines). pw_app_json: the file measures summed over
 every file, for pull requests, where SonarQube keeps only the changed files' measures.
 
 ## Page
@@ -210,10 +216,12 @@ every file, for pull requests, where SonarQube keeps only the changed files' mea
 `static/pythonweb.js`, registered as `pythonweb/pythonweb`. SonarQube mounts extension pages in a two-column grid:
 the page sets `options.el.style.gridColumn = '1 / -1'` and `width = '100%'`, and uses no CSS container queries.
 Plain DOM, charts as inline SVG built with `createElementNS`, no innerHTML with data, light and dark themes, on the
-branch or pull request being viewed. Tiles (endpoints, unprotected endpoints, taint findings, blocking calls), the
+branch or pull request being viewed. Tiles (endpoints, endpoints without auth, taint findings, blocking calls), the
 endpoint route tree from pw_endpoints_json (one row per path segment, chains without endpoints collapsed, method badges,
-async and "no auth" tags, a dot coloured by issues, the handler), the framework split with mutating, unprotected and
-async counts, and open issues by rule coloured by rule type. On a pull request the tiles read the totals of pw_app_json.
+async and "no auth" tags, a dot coloured by issues, the handler), the framework split with mutating, without auth and
+async counts, and open issues by rule coloured by rule type. On a pull request the tiles read the totals of
+pw_app_json. "Without auth" (the tile, the column and the tree tag) is one set: the endpoints with the `unprotected`
+flag, which pw_unprotected_endpoints counts (`PwMetrics.unprotected`).
 
 ## Conventions
 

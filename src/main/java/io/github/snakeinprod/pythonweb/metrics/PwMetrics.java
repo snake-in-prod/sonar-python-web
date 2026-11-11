@@ -27,8 +27,8 @@ public class PwMetrics implements Metrics {
     false);
   public static final Metric<Integer> MUTATING_ENDPOINTS = intMetric("pw_mutating_endpoints", "Mutating endpoints",
     "Endpoints for POST, PUT, PATCH or DELETE, and Django views open to any method that write", Metric.DIRECTION_NONE, false);
-  public static final Metric<Integer> UNPROTECTED_ENDPOINTS = intMetric("pw_unprotected_endpoints", "Unprotected endpoints",
-    "Endpoints that change data without checking the caller (issues of EndpointWithoutAuth)", Metric.DIRECTION_WORST, true);
+  public static final Metric<Integer> UNPROTECTED_ENDPOINTS = intMetric("pw_unprotected_endpoints", "Endpoints without auth",
+    "Endpoints that change data, check no caller and do not look public: those EndpointWithoutAuth reports", Metric.DIRECTION_WORST, true);
   public static final Metric<Integer> ASYNC_ENDPOINTS = intMetric("pw_async_endpoints", "Async endpoints",
     "Endpoints whose handler is an async def", Metric.DIRECTION_NONE, false);
   public static final Metric<Integer> BLOCKING_CALLS = intMetric("pw_blocking_calls", "Blocking calls in async code",
@@ -65,11 +65,19 @@ public class PwMetrics implements Metrics {
     }
     out.put(ENDPOINTS, endpoints.size());
     out.put(MUTATING_ENDPOINTS, (int) endpoints.stream().filter(Endpoint::mutating).count());
-    out.put(UNPROTECTED_ENDPOINTS, count(issues, Set.of("EndpointWithoutAuth")));
+    out.put(UNPROTECTED_ENDPOINTS, (int) endpoints.stream().filter(e -> unprotected(e, issues)).count());
     out.put(ASYNC_ENDPOINTS, (int) endpoints.stream().filter(Endpoint::async).count());
     out.put(BLOCKING_CALLS, count(issues, Set.of("BlockingCallInAsync")));
     out.put(TAINT_FINDINGS, count(issues, TAINT_RULES));
     return out;
+  }
+
+  /**
+   * The endpoint is one EndpointWithoutAuth reports (an issue of that rule on its handler, among the issues of its file):
+   * the one definition behind pw_unprotected_endpoints and the {@code unprotected} flag of pw_endpoints_json.
+   */
+  public static boolean unprotected(Endpoint e, List<Analyzer.Issue> issues) {
+    return issues.stream().anyMatch(i -> i.rule().equals("EndpointWithoutAuth") && i.line() == e.token().line());
   }
 
   private static int count(List<Analyzer.Issue> issues, Set<String> rules) {

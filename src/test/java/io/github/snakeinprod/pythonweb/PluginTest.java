@@ -78,8 +78,9 @@ class PluginTest {
       // SonarQube places extension pages in a two-column grid
       // charts are inline SVG built node by node; the measures it reads are this plugin's
       assertThat(js).contains("options.el.style.gridColumn = '1 / -1'", "options.el.style.width = '100%'", "aria-label",
-        "createElementNS", "'pw_endpoints_json'", "'pw_app_json'", "branchLike", "'pythonweb-python'")
-        .doesNotContain("container-type", "innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(");
+        "createElementNS", "'pw_endpoints_json'", "'pw_app_json'", "branchLike", "'pythonweb-python'", "e.unprotected")
+        // "without auth" everywhere is the unprotected flag (the endpoints EndpointWithoutAuth reports), never computed again
+        .doesNotContain("!e.protected", "container-type", "innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(");
       // api/rules/search answers HTTP 400 to a field it does not know in f (type comes back without asking)
       Matcher f = Pattern.compile("rules/search', \\{[^}]*\\bf: '([^']*)'").matcher(js);
       assertThat(f.find()).isTrue();

@@ -71,6 +71,7 @@ public class PythonWebSensor implements Sensor {
     Map<String, List<Endpoint>> endpoints = new HashMap<>();
     model.endpoints().forEach(e -> endpoints.computeIfAbsent(e.module().path(), k -> new ArrayList<>()).add(e));
     Map<String, List<Analyzer.Issue>> saved = new HashMap<>();
+    Map<String, List<Analyzer.Issue>> all = new HashMap<>();
     Map<String, Integer> totals = new HashMap<>();
     int failed = 0;
     for (Module m : model.modules()) {
@@ -87,13 +88,14 @@ public class PythonWebSensor implements Sensor {
         issues = List.of();
       }
       saved.put(m.path(), save(context, f, byPath, issues));
+      all.put(m.path(), issues);
       for (Map.Entry<Metric<Integer>, Integer> e : PwMetrics.fileValues(m, endpoints.getOrDefault(m.path(), List.of()), issues)
         .entrySet()) {
         context.<Integer>newMeasure().on(f).forMetric(e.getKey()).withValue(e.getValue()).save();
         totals.merge(e.getKey().getKey(), e.getValue(), Integer::sum);
       }
     }
-    context.<String>newMeasure().on(context.project()).forMetric(PwMetrics.ENDPOINTS_JSON).withValue(EndpointsJson.build(model, saved))
+    context.<String>newMeasure().on(context.project()).forMetric(PwMetrics.ENDPOINTS_JSON).withValue(EndpointsJson.build(model, saved, all))
       .save();
     // a pull request keeps the measures of its changed files only: the whole app's numbers for the page
     context.<String>newMeasure().on(context.project()).forMetric(PwMetrics.APP_JSON).withValue(PwMetrics.appJson(totals)).save();

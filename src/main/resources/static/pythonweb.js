@@ -19,7 +19,7 @@ window.registerExtension('pythonweb/pythonweb', function (options) {
   var MEASURES = ['pw_endpoints', 'pw_mutating_endpoints', 'pw_unprotected_endpoints', 'pw_async_endpoints',
     'pw_blocking_calls', 'pw_taint_findings', 'pw_endpoints_json', 'pw_app_json'];
   var NAMES = {pw_endpoints: 'Endpoints', pw_mutating_endpoints: 'Mutating endpoints',
-    pw_unprotected_endpoints: 'Unprotected endpoints', pw_async_endpoints: 'Async endpoints',
+    pw_unprotected_endpoints: 'Endpoints without auth', pw_async_endpoints: 'Async endpoints',
     pw_blocking_calls: 'Blocking calls in async', pw_taint_findings: 'Taint findings'};
   var FRAMEWORKS = [{key: 'django', label: 'Django'}, {key: 'drf', label: 'Django REST'}, {key: 'fastapi', label: 'FastAPI'},
     {key: 'flask', label: 'Flask'}];
@@ -199,7 +199,7 @@ window.registerExtension('pythonweb/pythonweb', function (options) {
     return {
       methods: sortMethods(methods),
       issues: entries.reduce(function (a, e) { return a + (e.issues || 0); }, 0),
-      open: entries.filter(function (e) { return e.mutating && !e.protected; }).length,
+      open: entries.filter(function (e) { return e.unprotected; }).length,
       async: entries.some(function (e) { return e.async; })
     };
   }
@@ -280,7 +280,7 @@ window.registerExtension('pythonweb/pythonweb', function (options) {
       var frameworks = entries.map(function (e) { return e.framework; }).filter(function (f, k, a) { return a.indexOf(f) === k; });
       var tip = r.path + ': ' + entries.map(function (e) {
         return (e.methods || []).join(',') + ' ' + e.function + ' (' + e.framework + (e.async ? ', async' : '') +
-          (e.protected ? ', auth: ' + (e.auth || 'yes') : e.mutating ? ', no auth' : '') + ')';
+          (e.protected ? ', auth: ' + (e.auth || 'yes') : e.unprotected ? ', no auth' : '') + ')';
       }).join('; ') + ', ' + plural(sm.issues, 'issue');
       marksOfRow.unshift(s('title', {}, [tip]),
         s('rect', {class: 'pw-hit', x: 0, y: y + 1, width: w, height: row - 2, rx: 4, fill: 'transparent'}));
@@ -456,7 +456,7 @@ window.registerExtension('pythonweb/pythonweb', function (options) {
     [
       {key: 'pw_endpoints', sub: mutating !== undefined ? fmt(mutating) + ' mutating · ' + fmt(asyncs || 0) + ' async' : null},
       {key: 'pw_unprotected_endpoints', bad: values.pw_unprotected_endpoints > 0, rules: ['EndpointWithoutAuth'],
-        sub: mutating !== undefined ? 'of ' + plural(mutating, 'mutating endpoint') : null},
+        sub: mutating !== undefined ? 'not public, of ' + plural(mutating, 'mutating endpoint') : null},
       {key: 'pw_taint_findings', bad: values.pw_taint_findings > 0, rules: TAINT_RULES, sub: 'request data reaching a sink'},
       {key: 'pw_blocking_calls', bad: values.pw_blocking_calls > 0, rules: ['BlockingCallInAsync'],
         sub: asyncs !== undefined ? 'in ' + plural(asyncs, 'async endpoint') : null}
@@ -491,12 +491,13 @@ window.registerExtension('pythonweb/pythonweb', function (options) {
       });
     }
 
-    // framework split: endpoints per framework, with how many change data and how many of those check nobody
+    // framework split: endpoints per framework, how many change data, and how many are without auth (the endpoints
+    // EndpointWithoutAuth reports, flagged in pw_endpoints_json: the same set the tile counts)
     var parts = FRAMEWORKS.map(function (f) {
       var list = endpoints.filter(function (e) { return e.framework === f.key; });
       var mut = list.filter(function (e) { return e.mutating; });
       return {label: f.label, color: 'var(--fw-' + f.key + ')', value: list.length, mutating: mut.length,
-        open: mut.filter(function (e) { return !e.protected; }).length,
+        open: list.filter(function (e) { return e.unprotected; }).length,
         async: list.filter(function (e) { return e.async; }).length};
     }).filter(function (p) { return p.value > 0; });
     if (parts.length === 0) {
@@ -507,7 +508,7 @@ window.registerExtension('pythonweb/pythonweb', function (options) {
         var cell = function (n) { return h('td', {class: n ? null : 'pw-zero'}, [fmt(n)]); };
         return [stack(parts, w, plural(total, 'endpoint') + ': ' + parts.map(function (p) { return p.label + ' ' + p.value; }).join(', ')),
           h('table', {class: 'pw-fw'}, [
-            h('thead', {}, [h('tr', {}, ['framework', 'endpoints', 'mutating', 'no auth', 'async'].map(function (c) {
+            h('thead', {}, [h('tr', {}, ['framework', 'endpoints', 'mutating', 'without auth', 'async'].map(function (c) {
               return h('th', {scope: 'col'}, [c]);
             }))]),
             h('tbody', {}, parts.map(function (p) {

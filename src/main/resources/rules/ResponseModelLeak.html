@@ -1,0 +1,33 @@
+<p>A FastAPI endpoint sends a password hash or a secret to the client. Without a <code>response_model</code> (or a
+return annotation), FastAPI serializes every attribute of the returned object, so an ORM <code>User</code> goes out with
+its <code>hashed_password</code>. A response model that itself has the field leaks it the same way.</p>
+<p>Reported: the response model or return annotation is a project class with a password, secret or hash field; or there
+is none and the endpoint returns an object of such a class (loaded with <code>db.get(User, id)</code>,
+<code>db.query(User)...</code>, <code>select(User)</code>, <code>User.objects...</code>, built with
+<code>User(...)</code>, a dependency parameter typed <code>User</code>, or a project function returning one), or a dict
+whose password key is read from an object.</p>
+<p>Not reported: response models without such fields, <code>response_model_exclude</code> and
+<code>response_model_include</code>, <code>SecretStr</code> fields, fields declared with <code>exclude=True</code> or
+deferred columns, queries narrowed to some columns or counted, and anything the analysis cannot follow.</p>
+<h2>Noncompliant code example</h2>
+<pre>
+@app.get("/users/{user_id}")
+def read_user(user_id: int, db: Session = Depends(get_db)):
+    return db.get(User, user_id)  # Noncompliant: User has hashed_password
+</pre>
+<h2>Compliant solution</h2>
+<pre>
+class UserOut(BaseModel):
+    id: int
+    email: str
+
+@app.get("/users/{user_id}", response_model=UserOut)
+def read_user(user_id: int, db: Session = Depends(get_db)):
+    return db.get(User, user_id)
+</pre>
+<h2>Resources</h2>
+<ul>
+  <li><a href="https://owasp.org/API-Security/editions/2023/en/0xa3-broken-object-property-level-authorization/">OWASP API Security 2023 API3 - Broken Object Property Level Authorization</a></li>
+  <li><a href="https://cwe.mitre.org/data/definitions/200.html">CWE-200 - Exposure of Sensitive Information to an Unauthorized Actor</a></li>
+  <li><a href="https://fastapi.tiangolo.com/tutorial/response-model/">FastAPI - Response Model</a></li>
+</ul>

@@ -1,0 +1,2 @@
+db = None
+Post = None

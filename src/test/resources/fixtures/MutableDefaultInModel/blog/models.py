@@ -1,5 +1,8 @@
-from django.contrib.postgres.fields import ArrayField
+from django.contrib.auth.models import AbstractUser
+from django.contrib.postgres.fields import ArrayField, JSONField
 from django.db import models
+from django_extensions.db.models import TimeStampedModel
+from jsonfield import JSONField as PackageJSONField
 
 
 class Post(models.Model):
@@ -14,3 +17,17 @@ class Post(models.Model):
 
 class Draft:
     meta = models.JSONField(default={})
+
+
+class Member(AbstractUser):
+    settings = models.JSONField(default={})  # Noncompliant {{shared by every Member; use default=dict}}
+    tags = models.JSONField(default=list)
+
+
+class Stamped(TimeStampedModel):
+    data = JSONField(default=[])  # Noncompliant
+
+
+class Imported(TimeStampedModel):
+    # jsonfield.JSONField deep-copies its default
+    data = PackageJSONField(default={})

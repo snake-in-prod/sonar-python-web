@@ -5,8 +5,9 @@ when the module is imported, and then shared. This rule reports such defaults wh
   default itself, so every request (of every user) sees and changes the same object;</li>
   <li>a field of an attrs class (<code>attr.ib(default=[])</code>, <code>attrs.field(default={})</code>, or an annotated
   attribute of an <code>@attrs.define</code> class): every instance gets the same object;</li>
-  <li>the default of a Django <code>JSONField</code>, <code>ArrayField</code> or <code>HStoreField</code>: every new model
-  instance gets the same object until it is saved and loaded again;</li>
+  <li>the default of a Django <code>JSONField</code>, <code>ArrayField</code> or <code>HStoreField</code>, in any model
+  (an <code>AbstractUser</code> or a third-party base too): every new model instance gets the same object until it is saved
+  and loaded again;</li>
   <li>a field of a standard library <code>@dataclass</code>: the class raises <code>ValueError</code> when the module is imported.</li>
 </ul>
 <p>Pydantic models and the parameters of FastAPI endpoints are not reported: Pydantic and FastAPI copy their defaults for

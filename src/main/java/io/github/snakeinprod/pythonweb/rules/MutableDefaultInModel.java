@@ -22,7 +22,8 @@ import java.util.regex.Pattern;
 
 /**
  * A [] or {} default that is one object for every instance or request: a Django or Flask endpoint parameter that the
- * body changes, an attrs field, a Django JSONField / ArrayField / HStoreField default, or a stdlib dataclass field
+ * body changes, an attrs field, a Django JSONField / ArrayField / HStoreField default (in any model: AbstractUser and
+ * third-party bases too), or a stdlib dataclass field
  * (which fails at import). Pydantic models and FastAPI parameters copy their defaults, so they are left alone.
  */
 public class MutableDefaultInModel implements PwRule {
@@ -158,8 +159,9 @@ public class MutableDefaultInModel implements PwRule {
         return auto != null && Exprs.text(auto).equals("True") ? Kind.ATTRS_AUTO : Kind.ATTRS;
       }
     }
-    return ctx.model().externalBases(c).stream().anyMatch(b -> b.equals("django.db.models.Model") || b.equals("django.db.models.base.Model"))
-      ? Kind.DJANGO : Kind.NONE;
+    // any class with a base may be a model (AbstractUser, a third-party or project base): only Django's container
+    // fields are checked there
+    return c.bases().isEmpty() ? Kind.NONE : Kind.DJANGO;
   }
 
   private static boolean unannotatedAttrsField(PyClass c) {

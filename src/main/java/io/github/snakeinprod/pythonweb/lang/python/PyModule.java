@@ -102,7 +102,10 @@ public record PyModule(List<PyStatement> statements, Map<String, String> imports
       }
       for (List<Node> item : Nodes.split(names, ",")) {
         String name = dotted(item);
-        if (!name.isEmpty() && !name.equals("*")) {
+        if (name.equals("*")) {
+          // a star import: key "*" + module, so locate() can look there for names defined nowhere else
+          imports.put("*" + module, module);
+        } else if (!name.isEmpty()) {
           String alias = alias(item);
           imports.put(alias != null ? alias : name, module.endsWith(".") ? module + name : module + "." + name);
         }

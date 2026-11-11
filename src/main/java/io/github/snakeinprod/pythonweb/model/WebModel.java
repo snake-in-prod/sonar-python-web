@@ -1,5 +1,6 @@
 package io.github.snakeinprod.pythonweb.model;
 
+import io.github.snakeinprod.pythonweb.parse.Chain;
 import io.github.snakeinprod.pythonweb.parse.Node;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -126,7 +127,7 @@ public final class WebModel {
       boolean local = from.function(first) != null || from.cls(first) != null || from.assignments().containsKey(first);
       String d = dotted;
       if (local || imports.keySet().stream().noneMatch(k -> d.equals(k) || d.startsWith(k + "."))) {
-        return dotted.isEmpty() || local ? new Ref(from, dotted) : null;
+        return dotted.isEmpty() || local ? new Ref(from, dotted) : star(from, dotted, 0);
       }
       Imports.Target t = Imports.split(from.resolve(dotted), from.path(), modules.keySet());
       if (t == null) {
@@ -138,6 +139,29 @@ public final class WebModel {
       }
       from = m;
       dotted = t.rest();
+    }
+    return null;
+  }
+
+  /** A name that {@code from x import *} brings in: the first star-imported project module that defines it. */
+  private Ref star(Module from, String dotted, int depth) {
+    if (depth > 3) {
+      return null;
+    }
+    String first = dotted.contains(".") ? dotted.substring(0, dotted.indexOf('.')) : dotted;
+    for (Map.Entry<String, String> e : from.py().imports().entrySet()) {
+      if (!e.getKey().startsWith("*")) {
+        continue;
+      }
+      Module m = moduleNamed(from, e.getValue());
+      if (m == null || m == from) {
+        continue;
+      }
+      boolean defines = m.function(first) != null || m.cls(first) != null || m.assignments().containsKey(first);
+      Ref r = defines ? new Ref(m, dotted) : star(m, dotted, depth + 1);
+      if (r != null) {
+        return r;
+      }
     }
     return null;
   }
@@ -158,8 +182,18 @@ public final class WebModel {
     if (dot < 0) {
       return r.module().function(r.name());
     }
-    PyClass c = r.module().cls(r.name().substring(0, dot));
-    return c == null ? null : method(c, r.name().substring(dot + 1));
+    String first = r.name().substring(0, dot);
+    String rest = r.name().substring(dot + 1);
+    PyClass c = r.module().cls(first);
+    if (c == null && !rest.contains(".")) {
+      // dao = Dao() at module level, then dao.query(...)
+      List<Node> v = r.module().assignment(first);
+      Chain ch = v == null ? null : Exprs.chain(v);
+      if (ch != null && ch.endsWithCall() && ch.calls().size() == 1 && Exprs.headSize(ch) + 1 == ch.segments().size()) {
+        c = cls(r.module(), Exprs.head(ch));
+      }
+    }
+    return c == null ? null : method(c, rest);
   }
 
   /** The project class a name denotes, or null. */

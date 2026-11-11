@@ -14,8 +14,9 @@ def export(request):
 
 def avatar(request):
     upload = request.FILES["avatar"]
+    # Django keeps only the base name of an uploaded file's name: it cannot leave MEDIA_ROOT
     target = os.path.join(settings.MEDIA_ROOT, upload.name)
-    with open(target, "wb") as out:  # Noncompliant
+    with open(target, "wb") as out:
         out.write(upload.read())
     return HttpResponse("ok")
 
@@ -50,3 +51,15 @@ def stored(request, rest):
     local_path = os.path.join(settings.MEDIA_ROOT, rest)
     assert_in_storage(local_path)
     return FileResponse(open(local_path, "rb"))
+def task_zip(request, task_id):
+    # the route's group (\d+) matches digits only
+    return FileResponse(open("task_%s.zip" % task_id, "rb"))
+
+
+def task_file(request, task_id, name):
+    return FileResponse(open(os.path.join(REPORTS, task_id, name), "rb"))  # Noncompliant {{parameter name}}
+
+
+def upload_dir(request, random_str):
+    # (\w+) holds no "/" and no ".": the directory stays under REPORTS
+    return FileResponse(open("%s/tmp/%s/list.txt" % (REPORTS, random_str), "rb"))

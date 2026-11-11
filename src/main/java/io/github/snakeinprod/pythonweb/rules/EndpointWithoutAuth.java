@@ -6,6 +6,7 @@ import io.github.snakeinprod.pythonweb.model.Endpoint;
 import io.github.snakeinprod.pythonweb.model.Exprs;
 import io.github.snakeinprod.pythonweb.model.Framework;
 import io.github.snakeinprod.pythonweb.model.Function;
+import io.github.snakeinprod.pythonweb.model.Imports;
 import io.github.snakeinprod.pythonweb.model.Module;
 import io.github.snakeinprod.pythonweb.model.PyClass;
 import io.github.snakeinprod.pythonweb.model.WebModel;
@@ -15,6 +16,7 @@ import io.github.snakeinprod.pythonweb.parse.Node;
 import io.github.snakeinprod.pythonweb.parse.Token;
 import io.github.snakeinprod.pythonweb.taint.Step;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,10 +25,12 @@ import java.util.regex.Pattern;
 
 /**
  * A mutating endpoint (PUT, PATCH, DELETE; POST or a Django view open to any method when it writes) with no check of
- * the caller, in an app where other endpoints do check it. Silent when the endpoint is explicitly open (AllowAny), looks
- * public by its name (login, signup, webhook...), checks something in its body or a helper, takes a dependency that
- * names a user, or when the app authenticates in a way the model cannot follow (auth middleware, unparsed DRF
- * defaults, include_router dependencies that were not resolved).
+ * the caller, in an app where other endpoints do check it (for Flask and FastAPI, the app is the set of modules imports
+ * connect, so the separate apps of one repository are judged apart). Silent when the endpoint is explicitly open
+ * (AllowAny), looks public by its name (login, signup, webhook...), counts visits (POST .../view), says it is open in a
+ * comment just above it, checks something in its body or a helper, takes a dependency that names a user, or when the
+ * app authenticates in a way the model cannot follow (auth middleware, unparsed DRF defaults, include_router
+ * dependencies that were not resolved).
  */
 public class EndpointWithoutAuth implements PwRule {
 
@@ -56,10 +60,15 @@ public class EndpointWithoutAuth implements PwRule {
   private static final Pattern BY_IP = Pattern.compile("(?i)rate_?limit\\w*_by_ip|ratelimit\\w*\\(.*key=[\"']ip[\"']");
 
   private static final Set<String> MUTATING = Set.of("PUT", "PATCH", "DELETE");
+  /** A path that counts what anonymous visitors do: POST /api/video/view, /items/{id}/hits. */
+  private static final Pattern COUNTER = Pattern.compile("(?i)/(views?|view_?count|impressions?|hits?|plays?)/?$");
+  private static final Pattern OPEN_COMMENT = Pattern.compile("(?i)\\b(public|ungated|unauthenticated|anonymous|no (app )?login|"
+    + "without (a |app )?login|no auth|without auth|open to)");
   private static final Set<String> WRITE_ACTIONS = Set.of("create", "update", "partial_update", "destroy");
   private static final Pattern WRITE_BASE = Pattern.compile("(Create|Update|Delete|Destroy)\\w*|ModelViewSet");
 
   private Map<Framework, Boolean> opaque;
+  private Map<Module, Module> apps;
   /** DEFAULT_PERMISSION_CLASSES appears somewhere: a DRF endpoint without evidence means the model could not read them. */
   private boolean drfSettings;
 
@@ -72,12 +81,13 @@ public class EndpointWithoutAuth implements PwRule {
     }
     if (opaque == null) {
       opaque = opaque(model);
+      apps = apps(model);
       drfSettings = model.modules().stream().anyMatch(m -> !m.isTest() && m.py().walk().stream()
         .anyMatch(s -> Exprs.text(s.nodes()).contains("DEFAULT_PERMISSION_CLASSES")));
     }
     Map<Token, List<Endpoint>> byToken = new LinkedHashMap<>();
     for (Endpoint e : model.endpoints()) {
-      if (e.module() == ctx.module() && unprotected(model, e)) {
+      if (e.module() == ctx.module() && sameAppChecks(e, protectedOnes) && unprotected(model, e)) {
         byToken.computeIfAbsent(e.token(), k -> new ArrayList<>()).add(e);
       }
     }
@@ -95,6 +105,45 @@ public class EndpointWithoutAuth implements PwRule {
     }
   }
 
+  /**
+   * Some endpoint of the same app checks its caller. A Flask or FastAPI app is the set of modules its imports connect,
+   * so independent apps in one repository (lab apps, microservices) are judged apart; Django apps are tied by
+   * include() strings, so a Django project counts as one app.
+   */
+  private boolean sameAppChecks(Endpoint e, List<Endpoint> protectedOnes) {
+    if (e.framework() != Framework.FLASK && e.framework() != Framework.FASTAPI) {
+      return true;
+    }
+    Module app = root(apps, e.module());
+    return protectedOnes.stream().anyMatch(p -> root(apps, p.module()) == app);
+  }
+
+  /** Union of modules over project imports: each module points towards its app's representative. */
+  private static Map<Module, Module> apps(WebModel model) {
+    Map<Module, Module> parent = new HashMap<>();
+    for (Module m : model.modules()) {
+      for (String dotted : m.py().imports().values()) {
+        Imports.Target t = Imports.split(dotted, m.path(), model.paths());
+        Module other = t == null ? null : model.module(t.path());
+        if (other != null) {
+          Module a = root(parent, m);
+          Module b = root(parent, other);
+          if (a != b) {
+            parent.put(a, b);
+          }
+        }
+      }
+    }
+    return parent;
+  }
+
+  private static Module root(Map<Module, Module> parent, Module m) {
+    while (parent.containsKey(m)) {
+      m = parent.get(m);
+    }
+    return m;
+  }
+
   private boolean unprotected(WebModel model, Endpoint e) {
     Endpoint.Auth auth = e.auth();
     boolean drfDefault = auth.evidence() != null && auth.evidence().startsWith("DEFAULT_PERMISSION_CLASSES");
@@ -108,7 +157,7 @@ public class EndpointWithoutAuth implements PwRule {
     if (!strong && !(e.mutating() && changesData(model, e))) {
       return false;
     }
-    if (PUBLIC.matcher(e.path()).find() || PUBLIC.matcher(e.label()).find()) {
+    if (PUBLIC.matcher(e.path()).find() || PUBLIC.matcher(e.label()).find() || COUNTER.matcher(e.path()).find() || openOnPurpose(e)) {
       return false;
     }
     if (e.function() != null && (PUBLIC.matcher(docstring(e.function())).find() || anonymousByDesign(e.function()))) {
@@ -135,6 +184,17 @@ public class EndpointWithoutAuth implements PwRule {
       }
     }
     return true;
+  }
+
+  /** A comment just above the handler says it is open: "# Deliberately ungated: shared with an external vendor". */
+  private static boolean openOnPurpose(Endpoint e) {
+    Function f = e.function();
+    if (f == null) {
+      return false;
+    }
+    int top = f.decorators().stream().mapToInt(d -> d.statement().first().line()).min().orElse(f.firstLine());
+    return e.module().file().comments().stream()
+      .anyMatch(c -> c.line() >= top - 3 && c.line() <= f.firstLine() && OPEN_COMMENT.matcher(c.text()).find());
   }
 
   /** A helper the handler calls checks the caller: {@code ensure_owner(request, item)}. */

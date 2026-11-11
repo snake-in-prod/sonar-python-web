@@ -13,4 +13,6 @@ urlpatterns = [
     path("after/", views.after_login),
     path("avatar/<path:name>", views.avatar),
     path("join/", views.join_host),
+    path("after2/", views.after_login_parsed),
+    path("same/", views.same_page),
 ]

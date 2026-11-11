@@ -55,6 +55,13 @@ public final class TaintEngine {
   private static final Set<String> URL_KINDS = Set.of("ssrf", "redirect");
   /** The name of a value or call giving a URL's fixed start: BASE_URL, get_public_root_url, api_host, self.endpoint. */
   private static final Pattern URL_BASE = Pattern.compile("(?i)(url|uri|root|base|host|domain|origin|endpoint)$");
+  /** A Django regex route's group, named or positional, and a group body matching digits only. */
+  private static final Pattern REGEX_GROUP = Pattern.compile("\\((?!\\?[:=!<])(?:\\?P<(\\w+)>)?((?:[^()\\\\]|\\\\.)*)\\)");
+  private static final Pattern DIGITS = Pattern.compile("(\\\\d|\\[0-9]|\\[\\\\d])(\\+|\\*|\\{\\d+(,\\d*)?})?");
+  /** A project helper named for making a path safe: clean_path(p), safe_filename(n). */
+  private static final Pattern PATH_CLEANER = Pattern.compile("(?i)^_?(clean|safe|sanitize|secure)_?(path|file_?name|filename|dir)");
+  /** A validation helper: validate_jobid(x), is_valid_name(x), is_safe_path(x), sanitize(x), assert_local_path(x). */
+  private static final Pattern VALIDATOR = Pattern.compile("^_?(validate|is_valid|valid_|is_safe|sanitize|verify_|assert_|ensure_)");
 
   private final WebModel model;
   private final TaintModels models;
@@ -210,11 +217,24 @@ public final class TaintEngine {
         while (pm.find()) {
           declared.put(pm.group(2) != null ? pm.group(2) : pm.group(3), pm.group(1) == null ? "str" : pm.group(1));
         }
+        // Django regex routes: (?P<id>\d+) and positional (\d+) groups match digits only
+        List<Boolean> positional = new ArrayList<>();
+        Matcher gm = REGEX_GROUP.matcher(e.path());
+        while (gm.find()) {
+          boolean digits = DIGITS.matcher(gm.group(2)).matches();
+          if (gm.group(1) == null) {
+            positional.add(digits);
+          } else if (digits) {
+            declared.put(gm.group(1), "int");
+          }
+        }
         int first = fn.takesSelf() ? 1 : 0;
         for (int i = first; i < ps.size(); i++) {
           Function.Param p = ps.get(i);
           String conv = declared.get(p.name());
-          boolean typed = conv != null && Set.of("int", "float", "uuid", "slug").contains(conv);
+          int g = i - first - 1;
+          boolean typed = conv != null && Set.of("int", "float", "uuid", "slug").contains(conv)
+            || conv == null && e.framework() != Framework.FLASK && g >= 0 && g < positional.size() && positional.get(g);
           boolean url = e.framework() == Framework.FLASK ? conv != null : i > first;
           if (p.stars() == 0 && !isRequest(p) && url && !typed) {
             out.add(p.name());
@@ -308,13 +328,20 @@ public final class TaintEngine {
         }
         Env e = env.copy();
         block(b.body(), e);
-        outs.add(e);
+        if (!exits(b.body())) {
+          // a branch ending in return or raise does not reach the code after the if
+          outs.add(e);
+        }
       }
-      if (!otherwise) {
+      if (!otherwise || outs.isEmpty()) {
         outs.add(env.copy());
       }
       env.set(outs);
       return j - 1;
+    }
+
+    private static boolean exits(List<PyStatement> body) {
+      return !body.isEmpty() && Set.of("return", "raise").contains(body.get(body.size() - 1).keyword());
     }
 
     private int tryBlock(List<PyStatement> stmts, int i, Env env) {
@@ -409,6 +436,7 @@ public final class TaintEngine {
           continue;
         }
         sinks(part, env);
+        validatorCalls(part, env);
         int aug = -1;
         for (int i = 1; i < part.size() && aug < 0; i++) {
           Token t = Nodes.leaf(part.get(i));
@@ -439,6 +467,10 @@ public final class TaintEngine {
           String receiver = Exprs.head(c);
           receiver = receiver.substring(0, receiver.lastIndexOf('.'));
           Taint t = args(((Chain.Call) c.segments().get(k)).args(), env);
+          if (c.lastName().equals("write")) {
+            // what is written fills a buffer's content, not a file's name or a path
+            t = t.clear(Set.of("path"));
+          }
           if (!t.isEmpty()) {
             env.vars.merge(receiver, t.step(step(c.first(), "added to " + receiver)), Taint::union);
           }
@@ -581,13 +613,46 @@ public final class TaintEngine {
       }
       // f"https://api.example/items/{x}", "/items/" + x: the literal start fixes the host, x cannot move the URL
       Token lead = Nodes.leaf(nodes.get(0));
-      if (lead != null && lead.kind() == TokenKind.STRING && fixesTarget(lead.text())) {
+      if (lead != null && lead.kind() == TokenKind.STRING && fixesTarget(lead.text()) || !out.isEmpty() && fixedByCleanPrefix(nodes, env)) {
         return out.clear(URL_KINDS);
       }
       // settings.BASE_URL + path, get_root_url() + key: a clean base named for a URL root comes first
       Chain c0 = chains.get(0);
       return lead0 != null && lead0.isEmpty() && c0.to() < nodes.size() && Nodes.isLeaf(nodes.get(c0.to()), "+")
         && URL_BASE.matcher(c0.lastName()).find() ? out.clear(URL_KINDS) : out;
+    }
+
+    /**
+     * {@code protocol + settings.HOST + "/live/" + name}: server values, then a literal that fixes the target, before
+     * any request data.
+     */
+    private boolean fixedByCleanPrefix(List<Node> nodes, Env env) {
+      List<List<Node>> parts = Nodes.split(nodes, "+");
+      if (parts.size() < 2) {
+        return false;
+      }
+      boolean server = false;
+      for (int k = 0; k < parts.size(); k++) {
+        List<Node> part = parts.get(k);
+        Token t = part.size() == 1 ? Nodes.leaf(part.get(0)) : null;
+        if (t != null && t.kind() == TokenKind.STRING) {
+          String v = Exprs.literal(t);
+          // after a server value, a "/", "?" or "#" ends the host that value gave
+          if (k > 0 && (fixesTarget(t.text()) || server && v != null && !v.isEmpty() && "/?#".indexOf(v.charAt(0)) >= 0)) {
+            return true;
+          }
+        } else if (!eval(part, env).isEmpty()) {
+          return false;
+        } else {
+          Chain c = k == 0 ? Exprs.chain(part) : null;
+          if (c != null && URL_BASE.matcher(c.lastName()).find()) {
+            // upload_root_url() + path: a base URL of the server's, then the caller's part
+            return true;
+          }
+          server = true;
+        }
+      }
+      return false;
     }
 
     /** A bracketed expression, list, tuple, set, dict or comprehension: the union of its parts. */
@@ -776,13 +841,19 @@ public final class TaintEngine {
         Step in = step(name, "passed to " + target.label() + "()");
         Step back = step(name, "returned by " + target.label() + "()");
         Taint out = s.returnSources.then(List.of(back), Set.of());
+        // clean_path(p), safe_filename(n): a project helper named for making a path safe
+        boolean pathCleaner = PATH_CLEANER.matcher(target.name()).find();
         if (!s.returns.isEmpty()) {
           Map<Integer, Taint> args = mapArgs(target, head, callArgs, env);
           for (Map.Entry<Integer, Taint.Flow> r : s.returns.entrySet()) {
             Taint a = args.get(r.getKey());
             if (a != null) {
-              out = out.union(a.then(Taint.append(Taint.append(List.of(in), r.getValue().path()), List.of(back)),
-                r.getValue().cleared()));
+              Set<String> cleared = r.getValue().cleared();
+              if (pathCleaner) {
+                cleared = new HashSet<>(cleared);
+                cleared.add("path");
+              }
+              out = out.union(a.then(Taint.append(Taint.append(List.of(in), r.getValue().path()), List.of(back)), cleared));
             }
           }
         }
@@ -917,6 +988,10 @@ public final class TaintEngine {
           if (segs.get(ci) instanceof Chain.Call call && segs.get(ci - 1) instanceof Chain.Name n) {
             String callee = ci == k ? qualify(Exprs.head(c), env) : "*." + n.token().text();
             Set<String> kinds = models.guard(callee, n.token().text(), ci > 1);
+            if (kinds == null && VALIDATOR.matcher(n.token().text()).find()) {
+              // if not validate_jobid(jobid): return ... : a check the engine cannot read, trusted for every kind
+              kinds = Set.of("*");
+            }
             if (kinds != null) {
               List<Node> checked = new ArrayList<>(call.args().children());
               if (ci > 1) {
@@ -934,6 +1009,18 @@ public final class TaintEngine {
           int end = Nodes.isLeaf(part.get(in - 1), "not") ? in - 1 : in;
           if (end > left) {
             clearVars(part.subList(left, end), Set.of("*"), env);
+          }
+        }
+      }
+    }
+
+    /** {@code err = verify_name(name)} then {@code if err: return}: the validated arguments are trusted from here on. */
+    private void validatorCalls(List<Node> nodes, Env env) {
+      for (Chain c : Chains.in(new Node.Group(null, null, nodes))) {
+        List<Chain.Segment> segs = c.segments();
+        for (int ci = 1; ci < segs.size(); ci++) {
+          if (segs.get(ci) instanceof Chain.Call call && segs.get(ci - 1) instanceof Chain.Name n && VALIDATOR.matcher(n.token().text()).find()) {
+            clearVars(call.args().children(), Set.of("*"), env);
           }
         }
       }

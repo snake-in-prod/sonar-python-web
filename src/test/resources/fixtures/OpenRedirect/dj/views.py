@@ -1,3 +1,5 @@
+from urllib.parse import urlparse
+
 from django.http import HttpResponseRedirect
 from django.shortcuts import redirect
 from django.urls import reverse
@@ -45,6 +47,9 @@ class ExportView(View):
 
 def _allow_redirect(url):
     return url.startswith("/") and not url.startswith("//")
+def _no_netloc(url):
+    parsed = urlparse(url)
+    return not parsed.netloc
 
 
 def after_login(request):
@@ -60,3 +65,12 @@ def avatar(request, name):
 
 def join_host(request):
     return redirect(request.GET["host"] + "/welcome/")  # Noncompliant
+def same_page(request):
+    return redirect(request.path)
+
+
+def after_login_parsed(request):
+    target = request.GET.get("next")
+    if target and _no_netloc(target):
+        return redirect(target)
+    return redirect("/")

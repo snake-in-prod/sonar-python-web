@@ -46,3 +46,27 @@ def search():
 @bp.route("/posts/<int:pid>")
 def show_post(pid):
     return Post.query.get(pid).body
+
+
+def require_perm(perm):
+    def decorator(f):
+        def wrapper(*args, **kwargs):
+            if not current_user.is_authenticated or not current_user.can(perm):
+                abort(403)
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+@bp.route("/posts/<int:pid>", methods=["PUT"])
+@require_perm("edit")
+def update_post(pid):
+    Post.query.get(pid).body = request.form["body"]
+    db.session.commit()
+
+
+# Deliberately ungated: the vendor scans this link from a printed pass, without an app login
+@bp.post("/passes/<int:pid>/checkout")
+def checkout_pass(pid):
+    Post.query.get(pid).body = "checked out"
+    db.session.commit()

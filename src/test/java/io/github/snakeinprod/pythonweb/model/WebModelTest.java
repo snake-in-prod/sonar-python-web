@@ -382,4 +382,74 @@ class WebModelTest {
     assertThat(f.isAsync()).isTrue();
     assertThat(model.endpoints()).singleElement().extracting(Endpoint::path).isEqualTo("/x/{a}");
   }
+
+  @Test
+  void layouts_seen_in_real_apps() {
+    // two Django projects in one repository, star imports, a list included by name, urlpatterns extended in an if,
+    // Django 1.x string views and patterns() tuples
+    WebModel django = TestProjects.model(
+      "site/settings.py", "ROOT_URLCONF = 'site.urls'\n",
+      "site/urls.py", """
+        from django.conf import settings
+        from django.urls import include, path
+        urlpatterns = [path("shop/", include("shop.urls"))]
+        if settings.DEBUG:
+            urlpatterns = [path("debug/", include("debug_toolbar.urls"))] + urlpatterns
+        """,
+      "shop/urls.py", """
+        from django.urls import include, path
+        from .views import *
+        extra = [path("tags", tags)]
+        urlpatterns = [path("new", item_new), path("", include((extra, "tags")))]
+        """,
+      "shop/views.py", "def item_new(request):\n    pass\n\ndef tags(request):\n    pass\n",
+      "lab/old/settings.py", "ROOT_URLCONF = 'old.urls'\n",
+      "lab/old/urls.py", """
+        from django.conf.urls import patterns, url, include
+        urlpatterns = patterns("", url(r"^$", "pages.views.home"), (r"^p/(?P<pk>[\\d]+)/$", "pages.views.page"))
+        """,
+      "lab/pages/views.py", "def home(request):\n    pass\n\ndef page(request, pk):\n    pass\n");
+    assertThat(django.endpoints()).extracting(Endpoint::path)
+      .containsExactlyInAnyOrder("/shop/new", "/shop/tags", "/", "/p/(?P<pk>[\\d]+)/");
+
+    // urlpatterns summed from list variables, one passed with a star
+    WebModel lists = TestProjects.model(
+      "proj/settings.py", "ROOT_URLCONF = 'proj.urls'\n",
+      "proj/urls.py", """
+        from django.conf.urls.i18n import i18n_patterns
+        from django.urls import path
+        from . import views
+        i18n_urls = [path("home", views.home)]
+        urls = [path("a", views.a)]
+        urls += [path("b", views.b)]
+        urlpatterns = i18n_patterns(*i18n_urls) + urls
+        """,
+      "proj/views.py", "def home(request):\n    pass\n\ndef a(request):\n    pass\n\ndef b(request):\n    pass\n");
+    assertThat(lists.endpoints()).extracting(Endpoint::path).containsExactlyInAnyOrder("/home", "/a", "/b");
+
+    // a Flask app made by a factory, a FastAPI router subclass
+    WebModel apps = TestProjects.model(
+      "web/app.py", """
+        from flask import Flask
+        def create_app():
+            app = Flask(__name__)
+            return app
+        application = create_app()
+        @application.route("/apks")
+        def apks():
+            pass
+        """,
+      "api/main.py", """
+        from fastapi import APIRouter, FastAPI
+        class SimpleRouter(APIRouter):
+            pass
+        api = SimpleRouter()
+        @api.get("/status")
+        def status():
+            pass
+        app = FastAPI()
+        app.include_router(api)
+        """);
+    assertThat(apps.endpoints()).extracting(Endpoint::path).containsExactlyInAnyOrder("/apks", "/status");
+  }
 }

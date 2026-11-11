@@ -2,7 +2,8 @@
   "_doc": "Taint models. Calls are resolved dotted names (imports and constructor types followed); '*.name' is a method of that name on any receiver; 'a.b.c|d' is a.b.c and a.b.d. args: positional indexes, -1 the receiver; kwargs: keyword names. when / unless: keyword values that must / must not be given. kinds: the sink kinds a sanitizer or guard clears, '*' for all.",
   "sources": {
     "requestAttributes": ["GET", "POST", "body", "FILES", "COOKIES", "META", "headers", "data", "query_params", "path_params",
-      "json", "form", "args", "values", "files", "cookies", "get_json", "get_data", "stream", "read", "query_string", "DATA", "QUERY_PARAMS"],
+      "json", "form", "args", "values", "files", "cookies", "get_json", "get_data", "stream", "read", "query_string", "DATA", "QUERY_PARAMS",
+      "path"],
     "globalRequests": ["flask.request", "quart.request"],
     "requestTypes": ["Request", "HttpRequest", "WSGIRequest", "ASGIRequest"],
     "notInputs": ["Request", "Response", "BackgroundTasks", "WebSocket", "Session", "AsyncSession", "HTTPConnection",
@@ -27,7 +28,8 @@
     {"kind": "command", "call": "asyncio.create_subprocess_shell", "args": [0], "kwargs": ["cmd"]},
 
     {"kind": "path", "call": "open", "args": [0], "kwargs": ["file"]},
-    {"kind": "path", "call": "io.open|codecs.open", "args": [0], "kwargs": ["file", "filename"]},
+    {"kind": "path", "call": "io.open", "args": [0], "kwargs": ["file"]},
+    {"kind": "path", "call": "codecs.open", "args": [0], "kwargs": ["filename"]},
     {"kind": "path", "call": "os.remove|unlink|rmdir|removedirs", "args": [0], "kwargs": ["path"]},
     {"kind": "path", "call": "shutil.rmtree", "args": [0], "kwargs": ["path"]},
     {"kind": "path", "call": "aiofiles.open", "args": [0], "kwargs": ["file"]},
@@ -118,5 +120,5 @@
     "*.format|format_map|join|replace"],
   "mutators": ["append", "extend", "insert", "add", "update", "setdefault", "appendleft", "write"],
   "cleanMethods": ["isdigit", "isnumeric", "isdecimal", "isalnum", "isalpha", "isidentifier", "isspace", "islower", "isupper",
-    "startswith", "endswith", "count", "index", "find", "rfind", "exists", "is_file", "is_dir", "is_valid", "__len__"]
+    "startswith", "endswith", "count", "index", "find", "rfind", "exists", "is_file", "is_dir", "is_valid", "__len__", "temporary_file_path", "hexdigest", "digest"]
 }

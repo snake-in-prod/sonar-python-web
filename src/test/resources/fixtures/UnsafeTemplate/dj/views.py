@@ -26,3 +26,13 @@ def greet_html(request):
 def card_safe(request):
     tpl = Template("<p>{{ bio }}</p>")
     return HttpResponse(tpl.render(Context({"bio": request.POST["bio"]})))
+
+
+def breadcrumb(request):
+    # request.path is decoded: "<" and ">" sent percent-encoded come back as they are
+    return HttpResponse(mark_safe('<a href="%s">here</a>' % request.path))  # Noncompliant
+
+
+def pager(request):
+    # get_full_path() percent-encodes quotes and angle brackets
+    return HttpResponse(mark_safe('<a href="%s?page=2">next</a>' % request.get_full_path()))

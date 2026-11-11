@@ -319,6 +319,8 @@ class WebModelTest {
                 return self.add_resource(resource, *[scoped(u) for u in urls], **kwargs)
         api = ApiExt()
         api.add_org_resource(Alert, "/api/alerts/<alert_id>", endpoint="alert")
+        # a call on the Api whose first argument is no name
+        users = api.namespace("user", description="users")
         """);
     assertThat(model.endpoints()).hasSize(7);
     assertThat(endpoint(model, "POST", "/t/new").auth().evidence()).isEqualTo("decorators = [login_required] on NewTopic");

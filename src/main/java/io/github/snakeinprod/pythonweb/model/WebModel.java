@@ -121,6 +121,9 @@ public final class WebModel {
    * project (a package, a builtin).
    */
   public Ref locate(Module from, String dotted) {
+    if (dotted == null) {
+      return null;
+    }
     for (int depth = 0; depth < 6; depth++) {
       String first = dotted.contains(".") ? dotted.substring(0, dotted.indexOf('.')) : dotted;
       Map<String, String> imports = from.py().imports();

@@ -84,13 +84,13 @@ public final class RuleCatalog {
       "async def save(item):\n    db.commit_async()  # Noncompliant", MissingAwait::new),
     spec("MutableDefaultInModel", Type.BUG, "MAJOR", true, null, "Model fields and endpoint parameters should not default to a shared mutable value",
       "A [] or {} default that is one object for every instance or call: a mutable default argument of an endpoint, or a Pydantic or dataclass field default shared between instances. Use default_factory, Field(default_factory=...) or None.",
-      "@app.route(\"/visit\")\ndef visit(seen={}):  # Noncompliant: the same dict for every request", STUB),
+      "@app.route(\"/visit\")\ndef visit(seen={}):  # Noncompliant: the same dict for every request", MutableDefaultInModel::new),
     spec("ResponseModelLeak", Type.VULNERABILITY, "MAJOR", false, null, "FastAPI endpoints should not return password or secret fields",
       "A FastAPI endpoint returning an ORM object or a dict with password, hash or secret fields and no response_model that leaves them out sends them to the client.",
       "@app.get(\"/users/{id}\")\ndef get_user(id: int):\n    return db.get(User, id)  # Noncompliant: User has hashed_password", ResponseModelLeak::new),
     spec("NPlusOneQuery", Type.CODE_SMELL, "MINOR", false, null, "Related objects should be fetched with the queryset",
       "Reading a related object inside a loop over a Django queryset without select_related or prefetch_related makes one query per row.",
-      "for order in Order.objects.all():\n    print(order.customer.name)  # Noncompliant", STUB));
+      "for order in Order.objects.all():\n    print(order.customer.name)  # Noncompliant", NPlusOneQuery::new));
 
   /** The spec of a rule key, or null. */
   public static Spec spec(String key) {

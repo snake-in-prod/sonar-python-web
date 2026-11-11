@@ -1,0 +1,36 @@
+<p>Deserializing request data or an uploaded file with a format that can build any object runs code chosen by the
+caller: a pickle stream can call <code>os.system</code> while it is loaded. This rule follows request inputs, uploaded
+files (Django <code>request.FILES</code>, FastAPI <code>UploadFile</code>, Flask <code>request.files</code>) and cookies across
+functions and modules to <code>pickle</code>, <code>dill</code>, <code>marshal</code>, <code>jsonpickle.decode()</code>,
+<code>joblib.load()</code>, <code>pandas.read_pickle()</code>, <code>numpy.load(allow_pickle=True)</code>,
+<code>yaml.unsafe_load()</code> and <code>yaml.load()</code> with an unsafe loader.</p>
+<p><code>yaml.load()</code> with a <code>SafeLoader</code>, <code>CSafeLoader</code>, <code>BaseLoader</code> or
+<code>FullLoader</code> (or a class named like one), <code>yaml.safe_load()</code>, <code>json</code> and data that comes from
+the server itself (a cache, a signed value) are not reported. The issue names the endpoint and shows the path from the
+input to the call.</p>
+<h2>Noncompliant code example</h2>
+<pre>
+def restore(request):
+    state = pickle.loads(request.body)  # Noncompliant
+</pre>
+<pre>
+@app.post("/models")
+async def upload_model(file: UploadFile):
+    model = pickle.loads(await file.read())  # Noncompliant
+</pre>
+<h2>Compliant solution</h2>
+<p>Exchange data as JSON, or YAML read with <code>yaml.safe_load()</code>, and validate it with a schema.</p>
+<pre>
+def restore(request):
+    state = json.loads(request.body)
+</pre>
+<pre>
+@app.post("/config")
+async def upload_config(file: UploadFile):
+    config = yaml.safe_load(await file.read())
+</pre>
+<h2>See</h2>
+<ul>
+  <li>OWASP Top 10 2021 Category A8 - Software and Data Integrity Failures</li>
+  <li>CWE-502 - Deserialization of Untrusted Data</li>
+</ul>

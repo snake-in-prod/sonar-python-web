@@ -18,6 +18,8 @@
     {"kind": "sql", "call": "sqlalchemy.text", "args": [0], "kwargs": ["text"]},
     {"kind": "sql", "call": "sqlalchemy.sql.text", "args": [0], "kwargs": ["text"]},
     {"kind": "sql", "call": "sqlalchemy.sql.expression.text", "args": [0], "kwargs": ["text"]},
+    {"kind": "sql", "call": "pandas.read_sql|read_sql_query", "args": [0], "kwargs": ["sql"]},
+    {"kind": "sql", "call": "*.fetch|fetchrow|fetchval|fetch_all|fetch_one|execute_many", "args": [0], "kwargs": ["query"]},
 
     {"kind": "command", "call": "os.system|popen", "args": [0], "kwargs": ["command", "cmd"]},
     {"kind": "command", "call": "subprocess.getoutput|getstatusoutput", "args": [0], "kwargs": ["cmd"]},
@@ -71,6 +73,8 @@
     {"kind": "deserialization", "call": "marshal.loads|load", "args": [0]},
     {"kind": "deserialization", "call": "jsonpickle.decode|loads", "args": [0]},
     {"kind": "deserialization", "call": "pandas.read_pickle", "args": [0]},
+    {"kind": "deserialization", "call": "joblib.load", "args": [0], "kwargs": ["filename"]},
+    {"kind": "deserialization", "call": "numpy.load", "args": [0], "kwargs": ["file"], "when": {"allow_pickle": ["True"]}},
     {"kind": "deserialization", "call": "yaml.unsafe_load|unsafe_load_all", "args": [0], "kwargs": ["stream"]},
     {"kind": "deserialization", "call": "yaml.load|load_all", "args": [0], "kwargs": ["stream"],
       "unless": {"Loader": ["SafeLoader", "CSafeLoader", "BaseLoader", "CBaseLoader", "yaml.SafeLoader", "yaml.CSafeLoader", "yaml.BaseLoader", "yaml.CBaseLoader"]}}
@@ -102,6 +106,7 @@
     {"call": "*.startswith|is_relative_to", "kinds": ["path"]},
     {"call": "os.path.commonpath|commonprefix", "kinds": ["path"]},
     {"call": "re.match|fullmatch", "kinds": ["*"]},
+    {"call": "*.isdigit|isnumeric|isdecimal|isalnum|isalpha|isidentifier", "kinds": ["sql", "command"]},
     {"call": "*.match|fullmatch", "kinds": ["*"]}
   ],
   "propagators": ["str", "bytes", "repr", "list", "tuple", "dict", "set", "sorted", "reversed", "format",

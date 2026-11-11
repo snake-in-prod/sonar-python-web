@@ -1,0 +1,43 @@
+<p>Request data that is pasted into an SQL string lets the caller change the query: read other rows, bypass a
+<code>WHERE</code> clause, or modify and drop tables. This rule follows request inputs (Django <code>request.GET</code>,
+<code>POST</code>, DRF <code>request.data</code>, FastAPI query, path and body parameters, Flask <code>request.args</code>,
+<code>form</code>, <code>json</code>, URL parameters) across functions and modules to raw SQL: <code>cursor.execute()</code>
+and its variants, Django <code>raw()</code>, <code>extra()</code> and <code>RawSQL</code>, SQLAlchemy <code>text()</code> and
+<code>execute()</code>, asyncpg and <code>databases</code> fetch methods, and <code>pandas.read_sql()</code>.</p>
+<p>It reports only when the query string is built on the way, with an f-string, <code>%</code>, <code>+</code> or
+<code>.format()</code>. Values cast with <code>int()</code>, FastAPI parameters typed <code>int</code>, <code>UUID</code>,
+<code>Literal</code> or an <code>Enum</code>, Django and Flask URL parameters with an <code>int</code> converter, values checked
+against an allow-list (<code>if column not in ALLOWED</code>) or with <code>isdigit()</code> or <code>re.fullmatch()</code>
+do not count. The issue names the endpoint and shows the path from the input to the query.</p>
+<h2>Noncompliant code example</h2>
+<pre>
+def search(request):
+    q = request.GET.get("q", "")
+    with connection.cursor() as cursor:
+        cursor.execute(f"SELECT * FROM item WHERE name = '{q}'")  # Noncompliant
+</pre>
+<pre>
+@app.get("/products")
+def products(term: str, db: Session = Depends(get_db)):
+    return db.execute(text(f"SELECT * FROM product WHERE name LIKE '%{term}%'")).all()  # Noncompliant
+</pre>
+<h2>Compliant solution</h2>
+<p>Pass the values as query parameters and let the driver quote them.</p>
+<pre>
+def search(request):
+    q = request.GET.get("q", "")
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT * FROM item WHERE name = %s", [q])
+</pre>
+<pre>
+@app.get("/products")
+def products(term: str, db: Session = Depends(get_db)):
+    return db.execute(text("SELECT * FROM product WHERE name LIKE :term"), {"term": f"%{term}%"}).all()
+</pre>
+<p>Identifiers (a sort column, a direction) cannot be parameters: map them through a fixed dict or check them against an
+allow-list first.</p>
+<h2>See</h2>
+<ul>
+  <li>OWASP Top 10 2021 Category A3 - Injection</li>
+  <li>CWE-89 - Improper Neutralization of Special Elements used in an SQL Command</li>
+</ul>

@@ -1,0 +1,37 @@
+<p>Request data that reaches a shell lets the caller run any command on the server: a <code>;</code>, <code>|</code>,
+<code>$(...)</code> or a back-quote in the value starts a second command. This rule follows request inputs across
+functions and modules to <code>os.system()</code>, <code>os.popen()</code>, <code>subprocess.getoutput()</code> and
+<code>getstatusoutput()</code>, <code>asyncio.create_subprocess_shell()</code> and the <code>subprocess</code> functions called
+with <code>shell=True</code>.</p>
+<p>Values quoted with <code>shlex.quote()</code>, cast with <code>int()</code>, typed <code>int</code> in FastAPI or by a URL
+converter, checked against an allow-list, with <code>isalnum()</code> or with <code>re.fullmatch()</code> do not count. An
+argument list given to <code>shell=True</code> whose first item is a literal program is not reported: the other items are only
+the shell's positional parameters. The issue names the endpoint and shows the path from the input to the call.</p>
+<h2>Noncompliant code example</h2>
+<pre>
+def ping(request):
+    host = request.GET["host"]
+    os.system("ping -c 1 " + host)  # Noncompliant
+</pre>
+<pre>
+@app.route("/convert", methods=["POST"])
+def convert():
+    subprocess.run("convert in.png -resize %s out.png" % request.form["size"], shell=True)  # Noncompliant
+</pre>
+<h2>Compliant solution</h2>
+<p>Run the program with an argument list and no shell, or quote each value.</p>
+<pre>
+def ping(request):
+    host = request.GET["host"]
+    subprocess.run(["ping", "-c", "1", host], check=True)
+</pre>
+<pre>
+@app.route("/convert", methods=["POST"])
+def convert():
+    subprocess.run(["convert", "in.png", "-resize", request.form["size"], "out.png"], check=True)
+</pre>
+<h2>See</h2>
+<ul>
+  <li>OWASP Top 10 2021 Category A3 - Injection</li>
+  <li>CWE-78 - Improper Neutralization of Special Elements used in an OS Command</li>
+</ul>

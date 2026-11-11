@@ -7,6 +7,7 @@ import io.github.snakeinprod.pythonweb.model.Exprs;
 import io.github.snakeinprod.pythonweb.model.Framework;
 import io.github.snakeinprod.pythonweb.model.Function;
 import io.github.snakeinprod.pythonweb.model.Module;
+import io.github.snakeinprod.pythonweb.model.PyClass;
 import io.github.snakeinprod.pythonweb.model.WebModel;
 import io.github.snakeinprod.pythonweb.parse.Chain;
 import io.github.snakeinprod.pythonweb.parse.Chains;
@@ -44,6 +45,10 @@ public final class TaintEngine {
   private static final Set<String> COMPARISONS = Set.of("==", "!=", "<", ">", "<=", ">=");
   private static final Set<String> AUGMENTED = Set.of("+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "//=", "@=");
   private static final Set<String> SKIPPED = Set.of("pass", "break", "continue", "global", "nonlocal", "import", "from", "del");
+  private static final Set<String> SCALARS = Set.of("int", "float", "bool", "Decimal", "UUID", "UUID1", "UUID3", "UUID4",
+    "UUID5", "date", "datetime", "time", "timedelta", "conint", "confloat", "condecimal", "PositiveInt", "NegativeInt",
+    "NonNegativeInt", "NonPositiveInt", "PositiveFloat", "NegativeFloat", "NonNegativeFloat", "NonPositiveFloat", "StrictInt",
+    "StrictFloat", "StrictBool");
   private static final Pattern PATH_PARAM = Pattern.compile("<(?:(\\w+)(?:\\([^>]*\\))?:)?(\\w+)>|\\{(\\w+)(?::\\w+)?}");
 
   private final WebModel model;
@@ -188,7 +193,7 @@ public final class TaintEngine {
             String alias = Exprs.dotted(p.annotation());
             List<Node> aliased = alias == null ? null : model.value(m, alias);
             if (p.stars() == 0 && !isRequest(p) && !text.contains("Depends(") && !text.contains("Security(")
-              && !models.notInputs.contains(lastName(p.annotationText()))
+              && !models.notInputs.contains(lastName(p.annotationText())) && !validated(p.annotationText())
               && (aliased == null || !Exprs.text(aliased).contains("Depends("))) {
               out.add(p.name());
             }
@@ -212,6 +217,34 @@ public final class TaintEngine {
         }
       }
       return out;
+    }
+
+    /**
+     * A FastAPI parameter type that FastAPI validates into a value that cannot carry text: int, float, bool, UUID, dates,
+     * constrained numbers, a Literal or an Enum ({@code Annotated[...]}, {@code Optional[...]} and {@code | None} looked
+     * through).
+     */
+    private boolean validated(String annotation) {
+      String a = annotation;
+      for (String wrapper : List.of("Annotated[", "Optional[")) {
+        if (a.startsWith(wrapper) && a.endsWith("]")) {
+          a = topLevel(a.substring(wrapper.length(), a.length() - 1), ',').get(0);
+        }
+      }
+      List<String> parts = new ArrayList<>(topLevel(a, '|'));
+      parts.remove("None");
+      if (a.isEmpty() || parts.isEmpty()) {
+        return false;
+      }
+      for (String part : parts) {
+        String name = lastName(part);
+        PyClass c = part.contains("[") || part.contains("(") ? null : model.cls(m, part);
+        boolean isEnum = c != null && model.externalBases(c).stream().anyMatch(b -> b.startsWith("enum."));
+        if (!part.startsWith("Literal[") && !part.startsWith("typing.Literal[") && !SCALARS.contains(name) && !isEnum) {
+          return false;
+        }
+      }
+      return true;
     }
 
     private boolean isRequest(Function.Param p) {
@@ -995,6 +1028,26 @@ public final class TaintEngine {
   private static String lastName(String dotted) {
     String s = dotted.replaceAll("[\\[\\](),|].*", "");
     return s.substring(s.lastIndexOf('.') + 1);
+  }
+
+  /** Splits on a separator outside brackets. */
+  private static List<String> topLevel(String s, char sep) {
+    List<String> out = new ArrayList<>();
+    int depth = 0;
+    int from = 0;
+    for (int i = 0; i < s.length(); i++) {
+      char c = s.charAt(i);
+      if ("([{".indexOf(c) >= 0) {
+        depth++;
+      } else if (")]}".indexOf(c) >= 0) {
+        depth--;
+      } else if (c == sep && depth == 0) {
+        out.add(s.substring(from, i));
+        from = i + 1;
+      }
+    }
+    out.add(s.substring(from));
+    return out;
   }
 
   private static int indexOfIdent(List<Node> nodes, String ident) {

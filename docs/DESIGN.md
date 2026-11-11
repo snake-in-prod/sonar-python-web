@@ -134,10 +134,11 @@ last pass records the findings. Calls on objects of unknown type (`Repo().find(x
 Sanitizers clear a value for some sink kinds (`int` for all, `shlex.quote` for command, `os.path.basename` for path,
 `html.escape` for template...). Guards clear a variable for the rest of the function when a condition checks it:
 `url_has_allowed_host_and_scheme(url)` (redirect), `p.startswith(base)` (path), `x in ALLOWED` (all kinds),
-`re.match(...)` (all kinds). A project validation helper (`validate_*`, `is_valid*`, `is_safe*`, `sanitize*`,
+`re.match(...)` (all kinds), and a lookup in a constant or configured map tested afterwards
+(`port = app.config["PROXY"].get(host)`, then `if not port:`) for the key (all kinds). A project validation helper (`validate_*`, `is_valid*`, `is_safe*`, `sanitize*`,
 `verify_*`, `assert_*`, `ensure_*`) called on a value, in a condition or as a statement (`err = verify_name(name)`),
 clears it for all kinds; one named for cleaning a path (`clean_path`, `safe_filename`) clears its result for path.
-`hexdigest()`, `digest()` and an upload's `temporary_file_path()` give clean values.
+`request.args.get("page", type=int)` (also float and bool), `hexdigest()`, `digest()` and an upload's `temporary_file_path()` give clean values.
 
 `Finding`: `kind()` (sql, command, path, ssrf, redirect, template, deserialization), `sinkName()` (the call as
 written), `label()` (the input: "request.GET", "parameter q"), `source()`, `sink()`, `path()` (every `Step` from the

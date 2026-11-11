@@ -1,0 +1,35 @@
+<p>Calling an <code>async def</code> function only creates a coroutine; nothing runs until it is awaited or scheduled.
+A coroutine call on a line of its own, or assigned to a name that is never awaited, is dropped: the email is not sent,
+the record is not saved, and Python only prints "coroutine was never awaited" at run time.</p>
+<p>The rule checks async functions for calls of project <code>async def</code> functions (not decorated, not async
+generators), of <code>asyncio.sleep</code>, <code>asyncio.wait_for</code> and <code>asyncio.wait</code>, and of the
+async methods of FastAPI / Starlette <code>Request</code> (<code>json</code>, <code>body</code>, <code>form</code>),
+<code>UploadFile</code> (<code>read</code>, <code>write</code>, <code>seek</code>, <code>close</code>) and
+<code>WebSocket</code> parameters. A coroutine passed on (<code>asyncio.create_task(notify())</code>,
+<code>gather</code>, <code>background_tasks.add_task</code>), returned, or awaited later is not reported.</p>
+<h2>Noncompliant code example</h2>
+<pre>
+@app.post("/users/{user_id}/notify")
+async def notify(user_id: int):
+    notify_user(user_id)  # Noncompliant: never runs
+
+@app.post("/echo")
+async def echo(request: Request):
+    data = request.json()  # Noncompliant: data is a coroutine
+    return {"name": data["name"]}
+</pre>
+<h2>Compliant solution</h2>
+<pre>
+@app.post("/users/{user_id}/notify")
+async def notify(user_id: int):
+    await notify_user(user_id)
+
+@app.post("/echo")
+async def echo(request: Request):
+    data = await request.json()
+    return {"name": data["name"]}
+</pre>
+<h2>Resources</h2>
+<ul>
+  <li><a href="https://docs.python.org/3/library/asyncio-task.html#coroutines">Python: Coroutines and tasks</a></li>
+</ul>

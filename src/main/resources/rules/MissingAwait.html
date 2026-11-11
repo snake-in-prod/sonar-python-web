@@ -5,7 +5,9 @@ the record is not saved, and Python only prints "coroutine was never awaited" at
 generators), of <code>asyncio.sleep</code>, <code>asyncio.wait_for</code> and <code>asyncio.wait</code>, and of the
 async methods of FastAPI / Starlette <code>Request</code> (<code>json</code>, <code>body</code>, <code>form</code>),
 <code>UploadFile</code> (<code>read</code>, <code>write</code>, <code>seek</code>, <code>close</code>) and
-<code>WebSocket</code> parameters. A coroutine passed on (<code>asyncio.create_task(notify())</code>,
+<code>WebSocket</code> parameters, and of SQLAlchemy / SQLModel <code>AsyncSession</code> parameters
+(<code>commit</code>, <code>rollback</code>, <code>refresh</code>, <code>execute</code>, <code>delete</code>, <code>get</code>...;
+an <code>Annotated[AsyncSession, Depends(...)]</code> alias is followed). A coroutine passed on (<code>asyncio.create_task(notify())</code>,
 <code>gather</code>, <code>background_tasks.add_task</code>), returned, or awaited later is not reported.</p>
 <h2>Noncompliant code example</h2>
 <pre>

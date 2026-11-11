@@ -210,6 +210,90 @@ class WebModelTest {
   }
 
   @Test
+  void django_views_registered_by_a_decorator_and_expanded_by_a_url_helper() {
+    WebModel model = TestProjects.model(
+      "proj/settings.py", "ROOT_URLCONF = \"proj.urls\"\n",
+      "proj/urls.py", """
+        from django.urls import include, path
+        from utils.urls import get_model_urls, other_urls
+
+        urlpatterns = [
+            path("shop/items/", include(get_model_urls("shop", "item", detail=False))),
+            path("shop/items/<int:pk>/", include(get_model_urls("shop", "item"))),
+            path("blog/items/", include(get_model_urls("blog", "item", detail=False))),
+            path("misc/", include(other_urls("shop", "item"))),
+        ]
+        """,
+      "core/registry.py", "registry = {\"views\": {}}\n",
+      "utils/views.py", """
+        from core.registry import registry
+
+        def register_model_view(model, name="", path=None, detail=True):
+            def _wrapper(cls):
+                registry["views"][model._meta.model_name].append({"view": cls, "name": name, "path": path, "detail": detail})
+                return cls
+            return _wrapper
+
+        def register_signal(model):
+            def _wrapper(cls):
+                return cls
+            return _wrapper
+        """,
+      "utils/urls.py", """
+        from django.urls import path
+        from core.registry import registry
+
+        def get_model_urls(app_label, model_name, detail=True):
+            return [path(c["path"], c["view"].as_view()) for c in registry["views"][model_name] if c["detail"] == detail]
+
+        def other_urls(app_label, model_name):
+            return []
+        """,
+      "shop/models.py", "class Item(Model):\n    pass\n",
+      "shop/views.py", """
+        from django.contrib.auth.mixins import LoginRequiredMixin
+        from django.views.generic import View
+        from utils.views import register_model_view, register_signal
+        from .models import Item
+
+        @register_model_view(Item, "list", path="", detail=False)
+        class ItemList(View):
+            def get(self, request):
+                return None
+
+        @register_model_view(Item, "add", detail=False)
+        @register_model_view(Item, "edit")
+        class ItemEdit(LoginRequiredMixin, View):
+            def get(self, request, pk=None):
+                return None
+
+            def post(self, request, pk=None):
+                return None
+
+        @register_model_view(Item)
+        class ItemDetail(View):
+            def get(self, request, pk):
+                return None
+
+        @register_model_view(Item, "audit")
+        class ItemAudit:
+            pass
+
+        @register_signal(Item)
+        class ItemSignal(View):
+            def get(self, request):
+                return None
+        """);
+    assertThat(endpoint(model, "GET", "/shop/items/").label()).isEqualTo("ItemList.get");
+    assertThat(endpoint(model, "POST", "/shop/items/add/").auth().evidence()).isEqualTo("LoginRequiredMixin");
+    assertThat(endpoint(model, "POST", "/shop/items/<int:pk>/edit/").label()).isEqualTo("ItemEdit.post");
+    assertThat(endpoint(model, "GET", "/shop/items/<int:pk>/").label()).isEqualTo("ItemDetail.get");
+    // near misses: another app's urls, a helper that reads no registry, a class that is not a view, a decorator that files nothing
+    assertThat(model.endpoints()).hasSize(6).noneMatch(e -> e.path().startsWith("/blog/") || e.path().startsWith("/misc/")
+      || e.label().startsWith("ItemSignal") || e.label().startsWith("ItemAudit"));
+  }
+
+  @Test
   void flask_blueprints_and_before_request_guards() {
     WebModel model = TestProjects.model("flask");
     assertThat(model.frameworks()).containsExactly(Framework.FLASK);

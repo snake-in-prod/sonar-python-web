@@ -100,7 +100,7 @@ public final class Scan {
     totals.forEach((k, v) -> System.out.println("== " + k + " " + v));
     perRule.forEach((k, v) -> System.out.println("== " + k + " " + v));
     if (flags.contains("--json")) {
-      System.out.println(EndpointsJson.build(model, all));
+      System.out.println(EndpointsJson.build(model, all, all));
     }
   }
 

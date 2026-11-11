@@ -11,15 +11,17 @@ import java.util.Map;
 /**
  * pw_endpoints_json: an array with one object per endpoint: {@code path}, {@code methods}, {@code framework} (django,
  * drf, fastapi, flask, aiohttp), {@code function} ("create_item", "ItemViewSet.create"), {@code file}, {@code line}, {@code auth}
- * (the evidence, or null), {@code protected}, {@code async}, {@code mutating} and {@code issues} (issues within the
- * handler's lines, or the view class's when the handler is inherited).
+ * (the evidence, or null), {@code protected}, {@code unprotected} (reported by EndpointWithoutAuth, see
+ * {@link PwMetrics#unprotected}), {@code async}, {@code mutating} and {@code issues} (issues shown within the handler's
+ * lines, or the view class's when the handler is inherited).
  */
 public final class EndpointsJson {
 
   private EndpointsJson() {
   }
 
-  public static String build(WebModel model, Map<String, List<Analyzer.Issue>> issues) {
+  /** {@code shown}: the saved issues by file, for the counts; {@code all}: every rule's issues, for the unprotected flag. */
+  public static String build(WebModel model, Map<String, List<Analyzer.Issue>> shown, Map<String, List<Analyzer.Issue>> all) {
     JsonArray out = new JsonArray();
     for (Endpoint e : model.endpoints()) {
       JsonObject o = new JsonObject();
@@ -33,9 +35,10 @@ public final class EndpointsJson {
       o.addProperty("line", e.token().line());
       o.addProperty("auth", e.auth().evidence());
       o.addProperty("protected", e.auth().present());
+      o.addProperty("unprotected", PwMetrics.unprotected(e, all.getOrDefault(e.module().path(), List.of())));
       o.addProperty("async", e.async());
       o.addProperty("mutating", e.mutating());
-      o.addProperty("issues", issues.getOrDefault(e.module().path(), List.of()).stream()
+      o.addProperty("issues", shown.getOrDefault(e.module().path(), List.of()).stream()
         .filter(i -> i.line() >= e.firstLine() && i.line() <= e.lastLine()).count());
       out.add(o);
     }

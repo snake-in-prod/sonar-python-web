@@ -2,6 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from . import views
+from .viewreg import get_view_urls
 
 router = DefaultRouter()
 router.register("api/notes", views.NoteViewSet)
@@ -22,4 +23,6 @@ urlpatterns = [
     path("multi/a/", views.multi_delete),
     path("multi/b/", views.multi_delete),
     path("", include(router.urls)),
+    path("bulk/", include(get_view_urls("notes", "note", detail=False))),
+    path("<int:pk>/", include(get_view_urls("notes", "note"))),
 ]

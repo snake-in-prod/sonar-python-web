@@ -107,6 +107,10 @@ public final class Exprs {
     if (nodes == null || nodes.isEmpty()) {
       return null;
     }
+    if (nodes.size() == 1 && nodes.get(0) instanceof Node.Group g && g.is("(") && g.items().size() == 1) {
+      // ("a" "b") spread over lines
+      return string(g.items().get(0));
+    }
     StringBuilder sb = new StringBuilder();
     for (Node n : nodes) {
       Token t = Nodes.leaf(n);

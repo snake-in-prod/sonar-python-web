@@ -55,6 +55,15 @@ final class AuthHints {
     return PACKAGES.stream().anyMatch(p -> dotted.equals(p) || dotted.startsWith(p + "."));
   }
 
+  /** A refusal in a body: 401 or 403, PermissionDenied, Forbidden. */
+  private static final Pattern REFUSAL = Pattern.compile("\\b40[13]\\b|PermissionDenied|Forbidden|Unauthorized|NotAuthenticated");
+
+  /** A project decorator that checks the caller: its body tests the user, or reads a credential and refuses (401, 403). */
+  static boolean checkingDecorator(Function d) {
+    String text = d == null ? "" : bodyText(d);
+    return BODY.matcher(text).find() || CREDENTIAL_PARAM.matcher(text).find() && REFUSAL.matcher(text).find();
+  }
+
   /** The text of a function's body, see {@link Exprs#text}. */
   static String bodyText(Function f) {
     StringBuilder sb = new StringBuilder();

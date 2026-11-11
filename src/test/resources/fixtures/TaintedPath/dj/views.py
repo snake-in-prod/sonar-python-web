@@ -39,3 +39,14 @@ def by_id(request):
     report_id = int(request.GET["id"])
     with open(os.path.join(REPORTS, "%d.csv" % report_id)) as fh:
         return HttpResponse(fh.read())
+
+
+def assert_in_storage(full_path):
+    base = os.path.normpath(settings.MEDIA_ROOT)
+    assert os.path.commonpath([base, os.path.normpath(full_path)]) == base
+
+
+def stored(request, rest):
+    local_path = os.path.join(settings.MEDIA_ROOT, rest)
+    assert_in_storage(local_path)
+    return FileResponse(open(local_path, "rb"))

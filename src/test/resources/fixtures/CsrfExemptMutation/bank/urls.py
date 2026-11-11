@@ -1,7 +1,7 @@
 from django.urls import path
 from django.views.decorators.csrf import csrf_exempt
 
-from accounts import views
+from accounts import api, views
 
 urlpatterns = [
     path("transfer/", views.transfer),
@@ -16,4 +16,6 @@ urlpatterns = [
     path("rename/", views.rename),
     path("touch/", views.touch),
     path("settings/", views.SettingsView.as_view()),
+    path("api/accounts/", api.AccountApi.as_view()),
+    path("api/pause/<uuid:code>/", api.pause),
 ]

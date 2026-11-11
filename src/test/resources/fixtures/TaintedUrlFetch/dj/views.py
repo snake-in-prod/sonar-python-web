@@ -37,3 +37,19 @@ def proxied(request):
     if parsed.netloc != "cdn.partner.example":
         return JsonResponse({}, status=400)
     return JsonResponse(requests.get(url).json())
+
+
+class ImporterBase:
+    @classmethod
+    def auth_url(cls, server, key):
+        return requests.post(server + "/oauth/request-token", data={"key": key})  # Noncompliant {{request.QUERY_PARAMS of ANY /jira/auth/}}
+
+
+class JiraImporter(ImporterBase):
+    pass
+
+
+def jira_auth(request):
+    # DRF 2 names: request.QUERY_PARAMS and request.DATA
+    server = request.QUERY_PARAMS.get("url")
+    return JsonResponse({"url": JiraImporter.auth_url(server, "k").text})

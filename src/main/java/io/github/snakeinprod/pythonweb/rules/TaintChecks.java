@@ -5,6 +5,8 @@ import io.github.snakeinprod.pythonweb.model.Endpoint;
 import io.github.snakeinprod.pythonweb.model.Exprs;
 import io.github.snakeinprod.pythonweb.model.Function;
 import io.github.snakeinprod.pythonweb.model.PyClass;
+import io.github.snakeinprod.pythonweb.parse.Chain;
+import io.github.snakeinprod.pythonweb.parse.Chains;
 import io.github.snakeinprod.pythonweb.parse.Nodes;
 import io.github.snakeinprod.pythonweb.parse.Token;
 import io.github.snakeinprod.pythonweb.parse.TokenKind;
@@ -28,7 +30,7 @@ final class TaintChecks {
   private static final Set<String> CONDITIONS = Set.of("if", "elif", "while", "assert");
   private static final Pattern ORIGIN = Pattern.compile("^[A-Za-z][A-Za-z0-9+.-]*://[^/?#\\\\@\\s]+");
   /** Names that show a URL's host being checked. */
-  static final Pattern HOST_CHECKS = Pattern.compile("(?i)safe|allowed|trusted|whitelist|allowlist|netloc|hostname");
+  static final Pattern HOST_CHECKS = Pattern.compile("(?i)safe|allow|trusted|whitelist|allowlist|netloc|hostname");
   private static final Pattern URL_VALIDATORS = Pattern.compile("(?i)^_?(validate|check|verify|ensure|is_valid|is_allowed)\\w*(url|uri|host|domain)|ssrf");
   private static final Pattern ADMIN = Pattern.compile("(?i)admin|superuser|staff");
   private static final Set<String> VALIDATORS = Set.of("field_validator", "validator", "model_validator", "root_validator");
@@ -53,6 +55,42 @@ final class TaintChecks {
    */
   static boolean checkedOnPath(Finding f, Predicate<Token> test) {
     return onPath(f, test, true);
+  }
+
+  /**
+   * Whether a project helper called in a function along the path tests something that passes the test in a condition
+   * or an assert: {@code assert_in_storage(path)} whose body asserts {@code os.path.commonpath(...) == base}.
+   */
+  static boolean helperChecks(RuleContext ctx, Finding f, Predicate<Token> test) {
+    Set<Function> seen = new HashSet<>();
+    for (Step s : f.path()) {
+      Function fn = s.module().functionAt(s.token().line());
+      if (fn == null || !seen.add(fn)) {
+        continue;
+      }
+      for (PyStatement top : fn.body()) {
+        for (PyStatement st : top.walk()) {
+          for (Chain c : Chains.direct(st.group())) {
+            Function callee = Exprs.firstCall(c) == null ? null : ctx.model().function(fn.module(), Exprs.head(c));
+            if (callee != null && callee != fn && seen.add(callee) && conditionHolds(callee, test)) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  private static boolean conditionHolds(Function fn, Predicate<Token> test) {
+    for (PyStatement top : fn.body()) {
+      for (PyStatement st : top.walk()) {
+        if (CONDITIONS.contains(st.keyword()) && Nodes.tokens(st.nodes()).stream().anyMatch(test)) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   /** Whether a URL check helper runs in a function along the path: validate_url(url), check_host(...), ensure_safe_uri(...). */

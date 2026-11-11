@@ -11,4 +11,5 @@ urlpatterns = [
     path("sorted/", views.sorted_items),
     path("safe/", views.safe_search),
     path("graph/", views.graph),
+    path("check/", views.name_check),
 ]

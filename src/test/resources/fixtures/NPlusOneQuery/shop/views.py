@@ -30,6 +30,14 @@ def item_counts(request):
     return JsonResponse({o.pk: o.items.count() for o in orders})  # Noncompliant {{"items"}}
 
 
+def owners_twice(request):
+    orders = Order.objects.filter(paid=True)
+    first = [o.customer for o in orders]  # Noncompliant
+    # the queryset and each order's customer are cached by the first loop
+    second = [o.customer for o in orders]
+    return JsonResponse({"n": len(first) + len(second)})
+
+
 def customer_orders(request):
     data = {}
     for c in Customer.objects.all():

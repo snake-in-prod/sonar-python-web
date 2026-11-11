@@ -8,4 +8,9 @@ urlpatterns = [
     path("safe/done/", views.safe_done),
     path("back/", views.back),
     path("to/<str:slug>/", views.to_item),
+    path("find/", views.find_page),
+    path("export/", views.ExportView.as_view()),
+    path("after/", views.after_login),
+    path("avatar/<path:name>", views.avatar),
+    path("join/", views.join_host),
 ]

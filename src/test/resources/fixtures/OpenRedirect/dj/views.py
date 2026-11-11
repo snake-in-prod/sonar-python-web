@@ -1,6 +1,8 @@
 from django.http import HttpResponseRedirect
 from django.shortcuts import redirect
+from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
+from django.views import View
 
 
 def login_done(request):
@@ -26,3 +28,35 @@ def back(request):
 
 def to_item(request, slug):
     return redirect(f"/items/{slug}/")
+
+
+def find_page(request):
+    # the query string after "?" cannot move the target
+    url = reverse("detail", kwargs={"pk": 1})
+    query = request.GET.copy()
+    return redirect(f"{url}?{query.urlencode()}")
+
+
+class ExportView(View):
+    def post(self, request):
+        params = request.GET.copy()
+        return redirect(request.path + "?" + params.urlencode())
+
+
+def _allow_redirect(url):
+    return url.startswith("/") and not url.startswith("//")
+
+
+def after_login(request):
+    target = request.GET.get("next")
+    if target and _allow_redirect(target):
+        return redirect(target)
+    return redirect("/")
+
+
+def avatar(request, name):
+    return redirect(get_public_root_url() + name, permanent=True)
+
+
+def join_host(request):
+    return redirect(request.GET["host"] + "/welcome/")  # Noncompliant

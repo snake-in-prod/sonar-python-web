@@ -9,4 +9,5 @@ urlpatterns = [
     path("raw/<path:rest>/", views.raw),
     path("safe-export/", views.safe_export),
     path("by-id/", views.by_id),
+    path("files/<path:rest>", views.stored),
 ]

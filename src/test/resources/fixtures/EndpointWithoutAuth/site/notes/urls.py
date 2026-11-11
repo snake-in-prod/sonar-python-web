@@ -17,5 +17,9 @@ urlpatterns = [
     path("new/", views.NoteCreate.as_view()),
     path("signup/", views.signup),
     path("<int:pk>/like/", views.like_note),
+    path("<uuid:code>/status/", views.delivery_status),
+    path("demo/", views.create_demo),
+    path("multi/a/", views.multi_delete),
+    path("multi/b/", views.multi_delete),
     path("", include(router.urls)),
 ]

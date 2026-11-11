@@ -73,13 +73,19 @@ above the file (deepest first) and its `src/`, so a Django app beside manage.py 
   require_admin, current_session...), any `Security(...)`, a `fastapi.security` scheme, an `Annotated[..., Depends(...)]`
   alias, or a project dependency that is defined in an auth module, reads a credential cookie or header, or itself
   depends on one of those; on the route, a parameter, a router, an include or the app.
-- Django: from ROOT_URLCONF (else every urlconf no other includes), `path` / `re_path` / `url` entries, `include()`
-  of modules, inline lists and DRF routers. Function views (methods from `require_POST`, `require_http_methods`,
-  `api_view`, else from `request.method` checks, else ANY), class-based views (one endpoint per handler method, one
-  for what a generic base provides), ViewSets (one per action and per `@action`). Auth: decorators
-  (`login_required`, `permission_required`, `user_passes_test`, `permission_classes`...), wrappers in urls.py,
-  `method_decorator`, auth mixins, `permission_classes` (AllowAny means open), DRF DEFAULT_PERMISSION_CLASSES,
-  LoginRequiredMiddleware, checks of `request.user` in the body.
+- Django: from every settings module's top-level ROOT_URLCONF (else every urlconf no other includes), `path` /
+  `re_path` / `url` entries, `include()` of modules, inline lists, module-level pattern lists by name (`+=`,
+  `.append`, `.extend`, `*urls` included) and DRF routers; then urlconfs that only a function includes (a hook
+  returning `path("x/", include(urls))`). A project helper returning `path(route, dispatcher, handlers)`
+  (`rest_path("users", GET=list_users, POST=create_user)`) gives one endpoint per method keyword. Function views
+  (methods from `require_POST`, `require_http_methods`, `api_view`, else from `request.method` checks, else ANY),
+  class-based views (one endpoint per handler method, one for what a generic base provides, one for a view that only
+  has `dispatch`), ViewSets (one per action and per `@action`, `@list_route`, `@detail_route`). Auth: decorators
+  (`login_required`, `permission_required`, `user_passes_test`, `permission_classes`...), a project decorator that
+  tests the user or reads a credential and answers 401/403, wrappers in urls.py, `method_decorator`, auth mixins,
+  `permission_classes` (AllowAny means open), DRF DEFAULT_PERMISSION_CLASSES, LoginRequiredMiddleware, checks of
+  `request.user` in the body, a dispatcher that checks the user. Registries the code fills at run time (a
+  `@register_view(Model)` decorator read by a URL builder) are not followed.
 - Flask: `Flask()` apps and `Blueprint(url_prefix=...)`, `@x.route(rule, methods=[...])`, `@x.get/post/...`,
   `add_url_rule`, `register_blueprint(url_prefix=...)`. Auth: decorators (`login_required`, `jwt_required`...), checks
   in the body, `before_request` guards of the blueprint or the app whose body checks the user.
@@ -152,7 +158,8 @@ public class TaintedSql implements PwRule {
 - `ctx.module()`, `ctx.model()` (endpoints, name resolution), `ctx.taint()` (findings), `ctx.file()`.
 - `ctx.report(token, message)`, `ctx.report(from, to, message, secondaries)` (secondary locations are `Step`s, in
   any module), or `ctx.report(finding, message)`: at the sink, the rest of the path as secondary locations. The sink
-  must be in the checked module (`findingsIn` gives those). A line with a NOSONAR comment gets no issue.
+  must be in the checked module (`findingsIn` gives those). A line with a NOSONAR comment gets no issue; a second
+  issue of the rule at the same token is dropped (two inputs reaching one sink are one defect).
 - Messages name the endpoint (`finding.where()`, `endpoint.path()`) and say what to do, in one sentence.
 - One rule instance per analysis: a rule may cache what it computes from the model in its fields.
 

@@ -55,6 +55,23 @@ def like_note(request, pk):
     return note.title
 
 
+@require_POST
+def delivery_status(request, code):
+    """Handle delivery status callbacks of the SMS provider."""
+    Note.objects.filter(code=code).update(delivered=True)
+
+
+@require_POST
+def create_demo(request):
+    rate_limit_request_by_ip(request, domain="demo")
+    Note.objects.create(title=request.POST["title"])
+
+
+@require_POST
+def multi_delete(request):  # Noncompliant {{POST /notes/multi/a/ and 1 more endpoint of multi_delete}}
+    Note.objects.all().delete()
+
+
 class NoteViewSet(viewsets.ModelViewSet):  # Noncompliant {{POST /notes/api/notes/ and 3 more endpoints of NoteViewSet}}
     queryset = Note.objects.all()
 

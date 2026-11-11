@@ -2,7 +2,7 @@
   "_doc": "Taint models. Calls are resolved dotted names (imports and constructor types followed); '*.name' is a method of that name on any receiver; 'a.b.c|d' is a.b.c and a.b.d. args: positional indexes, -1 the receiver; kwargs: keyword names. when / unless: keyword values that must / must not be given. kinds: the sink kinds a sanitizer or guard clears, '*' for all.",
   "sources": {
     "requestAttributes": ["GET", "POST", "body", "FILES", "COOKIES", "META", "headers", "data", "query_params", "path_params",
-      "json", "form", "args", "values", "files", "cookies", "get_json", "get_data", "stream", "read", "query_string"],
+      "json", "form", "args", "values", "files", "cookies", "get_json", "get_data", "stream", "read", "query_string", "DATA", "QUERY_PARAMS"],
     "globalRequests": ["flask.request", "quart.request"],
     "requestTypes": ["Request", "HttpRequest", "WSGIRequest", "ASGIRequest"],
     "notInputs": ["Request", "Response", "BackgroundTasks", "WebSocket", "Session", "AsyncSession", "HTTPConnection",

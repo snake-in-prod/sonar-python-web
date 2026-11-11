@@ -16,7 +16,8 @@ public final class TaintedPath implements PwRule {
   public void check(RuleContext ctx) {
     for (Finding f : TaintChecks.bySink(ctx, "path")) {
       if (!TaintChecks.slashFreePathParam(ctx, f) && !TaintChecks.validatedModel(ctx, f)
-        && !TaintChecks.checkedOnPath(f, t -> TaintChecks.ident(t, CHECKS) || TaintChecks.literal(t, s -> s.contains("..")))) {
+        && !TaintChecks.checkedOnPath(f, t -> TaintChecks.ident(t, CHECKS) || TaintChecks.literal(t, s -> s.contains("..")))
+        && !TaintChecks.helperChecks(ctx, f, t -> TaintChecks.ident(t, CHECKS))) {
         ctx.report(f, "Make sure " + f.label() + " of " + f.where() + " stays in its directory before it reaches " + f.sinkName() + "().");
       }
     }

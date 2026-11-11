@@ -39,6 +39,8 @@ public class NPlusOneQuery implements PwRule {
 
   /** Per model: relation attribute name to true for a single object (select_related), false for a manager (prefetch_related). */
   private final Map<PyClass, Map<String, Boolean>> relations = new HashMap<>();
+  /** Per function: queryset variable and relation already reported. */
+  private final Map<Function, Set<String>> iterated = new HashMap<>();
 
   @Override
   public void check(RuleContext ctx) {
@@ -97,6 +99,8 @@ public class NPlusOneQuery implements PwRule {
     if (var == null || var.kind() != TokenKind.IDENT || it == null) {
       return;
     }
+    // a queryset variable caches its instances and their relations once iterated: report its first loop only
+    String cached = it.segments().size() == 1 ? it.firstName() + "#" : null;
     if (it.segments().size() == 1) {
       List<Node> value = singleAssignment(fn, it.firstName(), line);
       it = value == null ? null : Exprs.chain(value);
@@ -131,6 +135,9 @@ public class NPlusOneQuery implements PwRule {
         done.add(rel);
         fix = "prefetch_related";
       } else {
+        continue;
+      }
+      if (cached != null && !iterated.computeIfAbsent(fn, k -> new HashSet<>()).add(cached + rel)) {
         continue;
       }
       List<Endpoint> eps = endpoints(ctx.model(), fn);

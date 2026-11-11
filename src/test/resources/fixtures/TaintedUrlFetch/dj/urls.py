@@ -8,4 +8,5 @@ urlpatterns = [
     path("profile/", views.profile),
     path("checked/", views.checked),
     path("proxied/", views.proxied),
+    path("jira/auth/", views.jira_auth),
 ]

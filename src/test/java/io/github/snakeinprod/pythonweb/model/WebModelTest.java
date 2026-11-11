@@ -100,6 +100,116 @@ class WebModelTest {
   }
 
   @Test
+  void django_pattern_lists_dispatch_helpers_and_hooks() {
+    WebModel model = TestProjects.model(
+      "site/settings.py", """
+        ROOT_URLCONF = "site.urls"
+        if RUNNING_ELSEWHERE:
+            ROOT_URLCONF = "site.other_urls"
+        """,
+      "site/other_urls.py", "urlpatterns = []\n",
+      "site/urls.py", """
+        from django.urls import include, path, re_path
+        from app import views
+        from app.rest import rest_path
+
+        _patterns = [
+            path("home/", views.home),
+            re_path(
+                (r"^thumb/(?P<id>[0-9]+)/"
+                 r"(?P<size>[0-9]+)/"),
+                views.thumb,
+            ),
+        ]
+        _patterns.append(path("gql/", views.GraphView.as_view()))
+        api = [
+            rest_path("users", GET=views.list_users, POST=(views.create_user, {"tag"})),
+        ]
+        urls = list(api)
+        urlpatterns = [path(settings.BASE_PATH, include((_patterns, "app")))] + i18n_patterns(*urls)
+        """,
+      "app/rest.py", """
+        from django.urls import path
+
+        def rest_dispatch(request, **kwargs):
+            if not request.user.is_authenticated:
+                return json_unauthorized()
+            return kwargs[request.method](request)
+
+        def rest_path(route, **handlers):
+            return path(route, rest_dispatch, handlers)
+        """,
+      "app/views.py", """
+        from django.views import View
+        from rest_framework.viewsets import ViewSet
+        from rest_framework.decorators import list_route
+        from .decorators import authorize
+
+        def home(request):
+            return render(request, "home.html")
+
+        def thumb(request, id, size):
+            return None
+
+        class GraphView(View):
+            def dispatch(self, request, *args, **kwargs):
+                return execute(request.body)
+
+        def list_users(request):
+            return []
+
+        def create_user(request):
+            return None
+
+        class Importer(ViewSet):
+            @list_route(methods=["POST"])
+            def start(self, request):
+                return None
+
+        @authorize
+        def pause(request, code):
+            return None
+        """,
+      "app/decorators.py", """
+        def authorize(f):
+            def wrapper(request, *args, **kwargs):
+                api_key = request.headers.get("X-Api-Key", "")
+                if len(api_key) != 32:
+                    return error("missing api key", 401)
+                return f(request, *args, **kwargs)
+            return wrapper
+        """,
+      "app/hooks.py", """
+        from django.urls import include, path
+        from app import hook_urls
+
+        @hooks.register("register_admin_urls")
+        def register_admin_urls():
+            return [path("extra/", include(hook_urls))]
+        """,
+      "app/hook_urls.py", """
+        from django.urls import path
+        from rest_framework.routers import DefaultRouter
+        from app import views
+
+        router = DefaultRouter()
+        router.register("importers", views.Importer)
+        urlpatterns = [path("pause/<uuid:code>", views.pause)] + router.urls
+        """);
+    assertThat(endpoint(model, "ANY", "/home/").label()).isEqualTo("home");
+    assertThat(endpoint(model, "ANY", "/thumb/(?P<id>[0-9]+)/(?P<size>[0-9]+)/").label()).isEqualTo("thumb");
+    assertThat(endpoint(model, "ANY", "/gql/").function().name()).isEqualTo("dispatch");
+    Endpoint users = endpoint(model, "POST", "/users");
+    assertThat(users.label()).isEqualTo("create_user");
+    assertThat(users.methods()).containsExactly("POST");
+    assertThat(users.auth().evidence()).isEqualTo("dispatched by rest_dispatch in app/rest.py");
+    assertThat(endpoint(model, "GET", "/users").label()).isEqualTo("list_users");
+    assertThat(endpoint(model, "ANY", "/extra/pause/<uuid:code>").auth().evidence()).isEqualTo("@authorize");
+    assertThat(endpoint(model, "POST", "/extra/importers/start/").label()).isEqualTo("Importer.start");
+    assertThat(model.endpoints()).hasSize(7);
+  }
+
+  @Test
   void flask_blueprints_and_before_request_guards() {
     WebModel model = TestProjects.model("flask");
     assertThat(model.frameworks()).containsExactly(Framework.FLASK);

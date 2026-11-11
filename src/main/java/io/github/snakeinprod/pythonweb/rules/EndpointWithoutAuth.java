@@ -53,6 +53,8 @@ public class EndpointWithoutAuth implements PwRule {
   private static final Pattern AUTHISH = Pattern.compile("(?i)user|auth|login|token|jwt|permission|admin|key|oauth|bearer|verify|"
     + "role|scope|security|credential");
 
+  private static final Pattern BY_IP = Pattern.compile("(?i)rate_?limit\\w*_by_ip|ratelimit\\w*\\(.*key=[\"']ip[\"']");
+
   private static final Set<String> MUTATING = Set.of("PUT", "PATCH", "DELETE");
   private static final Set<String> WRITE_ACTIONS = Set.of("create", "update", "partial_update", "destroy");
   private static final Pattern WRITE_BASE = Pattern.compile("(Create|Update|Delete|Destroy)\\w*|ModelViewSet");
@@ -83,7 +85,7 @@ public class EndpointWithoutAuth implements PwRule {
       Endpoint e = g.getValue().get(0);
       int more = g.getValue().size() - 1;
       String where = String.join("|", e.methods()) + " " + e.path();
-      String message = where + (more > 0 ? " and " + more + " more endpoint" + (more > 1 ? "s" : "") + " of " + e.viewClass().name() : "")
+      String message = where + (more > 0 ? " and " + more + " more endpoint" + (more > 1 ? "s" : "") + " of " + (e.viewClass() != null ? e.viewClass().name() : e.label()) : "")
         + " " + (more > 0 ? "have" : "has") + " no authentication: add " + hint(e.framework()) + ", as other endpoints of this app do.";
       Endpoint ref = protectedOnes.stream().filter(p -> p.module() == e.module()).findFirst()
         .orElse(protectedOnes.stream().filter(p -> p.framework() == e.framework()).findFirst().orElse(null));
@@ -107,6 +109,9 @@ public class EndpointWithoutAuth implements PwRule {
       return false;
     }
     if (PUBLIC.matcher(e.path()).find() || PUBLIC.matcher(e.label()).find()) {
+      return false;
+    }
+    if (e.function() != null && (PUBLIC.matcher(docstring(e.function())).find() || anonymousByDesign(e.function()))) {
       return false;
     }
     List<Function> code = new ArrayList<>();
@@ -213,6 +218,20 @@ public class EndpointWithoutAuth implements PwRule {
       }
     }
     return false;
+  }
+
+  /** The docstring of a function ("Handle delivery status callbacks."), or "". */
+  private static String docstring(Function f) {
+    List<Node> first = f.body().isEmpty() ? List.of() : f.body().get(0).nodes();
+    Token t = first.size() == 1 ? io.github.snakeinprod.pythonweb.parse.Nodes.leaf(first.get(0)) : null;
+    return t != null && t.kind() == io.github.snakeinprod.pythonweb.parse.TokenKind.STRING ? t.text() : "";
+  }
+
+  /** Rate limited by client IP (rate_limit_request_by_ip, @ratelimit(key="ip")): the endpoint expects anonymous callers. */
+  private static boolean anonymousByDesign(Function f) {
+    StringBuilder sb = new StringBuilder(bodyText(f));
+    f.decorators().forEach(d -> sb.append(Exprs.text(d.statement().nodes())).append('\n'));
+    return BY_IP.matcher(sb).find();
   }
 
   static String bodyText(Function f) {

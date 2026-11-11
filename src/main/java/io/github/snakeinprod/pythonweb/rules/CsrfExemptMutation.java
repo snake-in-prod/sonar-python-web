@@ -54,7 +54,7 @@ public class CsrfExemptMutation implements PwRule {
         continue;
       }
       Step exempt = exemption(model, e);
-      if (exempt == null) {
+      if (exempt == null || e.viewClass() != null && ownApiFramework(model, e.viewClass())) {
         continue;
       }
       List<Function> code = new ArrayList<>();
@@ -75,6 +75,15 @@ public class CsrfExemptMutation implements PwRule {
           + ": it changes data for a user signed in by session cookie (" + why + "), so any site can trigger it.", List.of(exempt));
       }
     }
+  }
+
+  /**
+   * A project copy of a DRF-style API view (its own authentication_classes or perform_authentication): like DRF, it
+   * exempts dispatch and leaves CSRF to its authentication classes.
+   */
+  private static boolean ownApiFramework(WebModel model, PyClass cls) {
+    return model.hierarchy(cls).stream().anyMatch(k -> k.attributes().containsKey("authentication_classes")
+      || k.method("perform_authentication") != null || k.method("get_authenticators") != null);
   }
 
   /** Where CSRF protection is turned off for this endpoint, or null. */

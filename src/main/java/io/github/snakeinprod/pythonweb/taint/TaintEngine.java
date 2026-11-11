@@ -53,6 +53,8 @@ public final class TaintEngine {
   /** A literal start that fixes where a URL goes: "https://host/", "/items/", "?q=", "&page=", "items/". */
   private static final Pattern FIXED_TARGET = Pattern.compile("^(?:[A-Za-z][A-Za-z0-9+.-]*://[^/?#\\\\@\\s]+[/?#]|/[^/\\\\]|[?#&]|[\\w.-]+/)");
   private static final Set<String> URL_KINDS = Set.of("ssrf", "redirect");
+  /** The name of a value or call giving a URL's fixed start: BASE_URL, get_public_root_url, api_host, self.endpoint. */
+  private static final Pattern URL_BASE = Pattern.compile("(?i)(url|uri|root|base|host|domain|origin|endpoint)$");
 
   private final WebModel model;
   private final TaintModels models;
@@ -526,19 +528,28 @@ public final class TaintEngine {
         chains.put(c.from(), c);
       }
       Taint out = Taint.EMPTY;
+      Taint lead0 = null;
+      // path + "?" + params.urlencode(): what follows the query mark cannot move the URL
+      boolean query = false;
       int i = 0;
       while (i < nodes.size()) {
         Chain c = chains.get(i);
         if (c != null) {
-          out = out.union(segments(c.segments(), env));
+          Taint v = segments(c.segments(), env);
+          lead0 = i == 0 ? v : lead0;
+          out = out.union(query ? v.clear(URL_KINDS) : v);
           i = c.to();
           continue;
         }
         Node n = nodes.get(i);
         Token t = Nodes.leaf(n);
         Taint v;
+        boolean mark = false;
         if (t != null && t.kind() == TokenKind.STRING) {
           v = fstring(t, env);
+          String lit = Exprs.literal(t);
+          mark = lit != null && (lit.contains("?") || lit.contains("#")) && (i > 0 && Nodes.isLeaf(nodes.get(i - 1), "+")
+            || i + 1 < nodes.size() && Nodes.isLeaf(nodes.get(i + 1), "+"));
         } else if (n instanceof Node.Group g) {
           v = group(g, env);
         } else {
@@ -565,11 +576,18 @@ public final class TaintEngine {
             break;
           }
         }
-        out = out.union(v);
+        out = out.union(query ? v.clear(URL_KINDS) : v);
+        query |= mark;
       }
       // f"https://api.example/items/{x}", "/items/" + x: the literal start fixes the host, x cannot move the URL
       Token lead = Nodes.leaf(nodes.get(0));
-      return lead != null && lead.kind() == TokenKind.STRING && fixesTarget(lead.text()) ? out.clear(URL_KINDS) : out;
+      if (lead != null && lead.kind() == TokenKind.STRING && fixesTarget(lead.text())) {
+        return out.clear(URL_KINDS);
+      }
+      // settings.BASE_URL + path, get_root_url() + key: a clean base named for a URL root comes first
+      Chain c0 = chains.get(0);
+      return lead0 != null && lead0.isEmpty() && c0.to() < nodes.size() && Nodes.isLeaf(nodes.get(c0.to()), "+")
+        && URL_BASE.matcher(c0.lastName()).find() ? out.clear(URL_KINDS) : out;
     }
 
     /** A bracketed expression, list, tuple, set, dict or comprehension: the union of its parts. */
@@ -628,7 +646,8 @@ public final class TaintEngine {
         } else if (c == '{') {
           int end = fieldEnd(text, i + 1);
           Taint v = field(t, text, i + 1, end, env);
-          out = out.union(!v.isEmpty() && FIXED_TARGET.matcher(before).find() ? v.clear(URL_KINDS) : v);
+          boolean fixed = FIXED_TARGET.matcher(before).find() || before.indexOf("?") >= 0 || before.indexOf("#") >= 0;
+          out = out.union(!v.isEmpty() && fixed ? v.clear(URL_KINDS) : v);
           before.append('x');
           i = end + 1;
         } else {
@@ -977,7 +996,9 @@ public final class TaintEngine {
     /** Argument values by parameter index of the callee: positional, keyword, *args and **kwargs. */
     private Map<Integer, Taint> mapArgs(Function target, String head, Node.Group callArgs, Env env) {
       List<Function.Param> ps = target.params();
-      boolean bound = target.takesSelf() && head.contains(".") && model.cls(m, head.substring(0, head.lastIndexOf('.'))) == null;
+      // obj.method(x) and Class.classmethod(x) pass the receiver themselves; Class.method(obj, x) does not
+      boolean bound = target.takesSelf() && head.contains(".") && (model.cls(m, head.substring(0, head.lastIndexOf('.'))) == null
+        || target.decorators().stream().anyMatch(d -> d.name().equals("classmethod")));
       int offset = bound ? 1 : 0;
       int varArgs = -1;
       int kwArgs = -1;

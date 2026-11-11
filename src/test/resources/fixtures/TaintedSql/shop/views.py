@@ -68,3 +68,11 @@ def safe_search(request):
 def graph(request):
     result = schema.execute(request.POST["query"])
     return JsonResponse({"data": result.data})
+
+
+def name_check(request):
+    first = request.POST["first"]
+    last = request.POST["last"]
+    with connection.cursor() as cursor:
+        # two inputs, one sink: one issue
+        cursor.execute("SELECT id FROM shop_person WHERE first = '" + first + "' AND last = '" + last + "'")  # Noncompliant

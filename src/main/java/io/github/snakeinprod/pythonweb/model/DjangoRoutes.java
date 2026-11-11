@@ -63,6 +63,8 @@ final class DjangoRoutes {
   private final List<Endpoint> out = new ArrayList<>();
   private Endpoint.Auth drfDefault = Endpoint.Auth.NONE;
   private boolean loginMiddleware;
+  private final Set<String> expanding = new HashSet<>();
+  private final Set<Module> reached = new HashSet<>();
 
   private DjangoRoutes(WebModel model) {
     this.model = model;
@@ -74,13 +76,14 @@ final class DjangoRoutes {
 
   private List<Endpoint> run() {
     List<Module> django = model.modules().stream().filter(m -> !m.isTest()).toList();
-    String root = null;
-    Module rootFrom = null;
+    List<Module> urlconfs = django.stream().filter(m -> m.assignments().containsKey("urlpatterns")).toList();
+    // every settings module's ROOT_URLCONF: a repository may hold several Django projects
+    Set<Module> roots = new LinkedHashSet<>();
     for (Module m : django) {
-      String conf = Exprs.string(m.assignment("ROOT_URLCONF"));
-      if (conf != null && root == null) {
-        root = conf;
-        rootFrom = m;
+      String conf = rootUrlconf(m);
+      Module r = conf == null ? null : model.moduleNamed(m, conf);
+      if (r != null && urlconfs.contains(r)) {
+        roots.add(r);
       }
       List<Node> rest = m.assignment("REST_FRAMEWORK");
       if (rest != null) {
@@ -89,12 +92,7 @@ final class DjangoRoutes {
       List<Node> middleware = m.assignment("MIDDLEWARE");
       loginMiddleware |= middleware != null && Exprs.text(middleware).contains("LoginRequiredMiddleware");
     }
-    List<Module> urlconfs = django.stream().filter(m -> m.assignments().containsKey("urlpatterns")).toList();
-    List<Module> roots = new ArrayList<>();
-    Module rootModule = root == null ? null : model.moduleNamed(rootFrom, root);
-    if (rootModule != null && urlconfs.contains(rootModule)) {
-      roots.add(rootModule);
-    } else {
+    if (roots.isEmpty()) {
       Set<Module> included = new HashSet<>();
       for (Module m : urlconfs) {
         for (List<Node> v : m.assignments().get("urlpatterns")) {
@@ -113,22 +111,114 @@ final class DjangoRoutes {
     for (Module r : roots) {
       urlconf(r, "", null, new HashSet<>());
     }
+    hookedUrlconfs(django);
     return out;
+  }
+
+  /**
+   * {@code path("redirects/", include(urls))} inside a function (a hook returning extra URLs, registered at run time):
+   * each urlconf so included that the roots did not reach, from that prefix.
+   */
+  private void hookedUrlconfs(List<Module> django) {
+    for (Module m : django) {
+      if (!m.py().imports().containsValue("django.urls.include") && !m.py().imports().containsValue("django.conf.urls.include")) {
+        continue;
+      }
+      for (Function f : m.functions()) {
+        for (PyStatement s : f.body()) {
+          for (PyStatement x : s.walk()) {
+            for (Chain c : Chains.in(x.group())) {
+              hookedEntry(m, c);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private void hookedEntry(Module m, Chain c) {
+    Chain.Call call = Exprs.firstCall(c);
+    if (call == null || !Set.of("path", "re_path").contains(c.lastName())) {
+      return;
+    }
+    List<Node> view = Exprs.arg(call, 1, "view");
+    Chain v = view == null ? null : Exprs.chain(view);
+    if (v != null && v.lastName().equals("include") && Exprs.firstCall(v) != null) {
+      Module t = includedModule(m, Exprs.arg(Exprs.firstCall(v), 0, null));
+      String route = Exprs.string(Exprs.arg(call, 0, "route"));
+      if (t != null && reached.add(t)) {
+        urlconf(t, clean(route == null ? "" : route), null, new HashSet<>());
+      }
+    }
   }
 
   private void urlconf(Module m, String prefix, String wrapper, Set<Module> visiting) {
     if (!visiting.add(m) || visiting.size() > 20) {
       return;
     }
-    for (List<Node> v : m.assignments().getOrDefault("urlpatterns", List.of())) {
+    reached.add(m);
+    variable(m, "urlpatterns", prefix, wrapper, visiting);
+    visiting.remove(m);
+  }
+
+  /** The top-level ROOT_URLCONF of a settings module (one set in an {@code if} block only when there is none). */
+  private static String rootUrlconf(Module m) {
+    for (PyStatement s : m.py().statements()) {
+      List<List<Node>> parts = s.body().isEmpty() ? Exprs.assignment(s.nodes()) : List.of();
+      if (parts.size() == 2 && "ROOT_URLCONF".equals(Exprs.dotted(Exprs.unannotated(parts.get(0))))) {
+        String v = Exprs.string(parts.get(1));
+        if (v != null) {
+          return v;
+        }
+      }
+    }
+    return Exprs.string(m.assignment("ROOT_URLCONF"));
+  }
+
+  /**
+   * A module-level list of patterns: its assignments and {@code +=}, then {@code name.append(path(...))} and
+   * {@code name.extend([...])} anywhere in the module.
+   */
+  private void variable(Module m, String name, String prefix, String wrapper, Set<Module> visiting) {
+    String key = m.path() + "#" + name;
+    if (!expanding.add(key)) {
+      return;
+    }
+    for (List<Node> v : m.assignments().getOrDefault(name, List.of())) {
       patterns(m, v, prefix, wrapper, visiting);
     }
-    visiting.remove(m);
+    for (PyStatement s : m.py().walk()) {
+      for (Chain c : Chains.direct(s.group())) {
+        String h = Exprs.head(c);
+        Chain.Call call = Exprs.firstCall(c);
+        List<Node> arg = call == null ? null : Exprs.arg(call, 0, null);
+        if (arg != null && h.equals(name + ".append")) {
+          entry(m, arg, prefix, wrapper, visiting);
+        } else if (arg != null && h.equals(name + ".extend")) {
+          patterns(m, arg, prefix, wrapper, visiting);
+        }
+      }
+    }
+    expanding.remove(key);
+  }
+
+  /** A name standing for a list of patterns ({@code include(_patterns)}, {@code urls + extra}); false when it is not one. */
+  private boolean named(Module m, List<Node> nodes, String prefix, String wrapper, Set<Module> visiting) {
+    String dotted = Exprs.dotted(nodes);
+    WebModel.Ref r = dotted == null ? null : model.locate(m, dotted);
+    if (r == null || r.name().isEmpty() || r.name().contains(".") || !r.module().assignments().containsKey(r.name())) {
+      return false;
+    }
+    variable(r.module(), r.name(), prefix, wrapper, visiting);
+    return true;
   }
 
   /** A urlpatterns value: a list, a sum of lists, {@code router.urls}, {@code format_suffix_patterns([...])}. */
   private void patterns(Module m, List<Node> value, String prefix, String wrapper, Set<Module> visiting) {
     for (List<Node> part : Nodes.split(value, "+")) {
+      if (part.size() > 1 && Nodes.isLeaf(part.get(0), "*")) {
+        part = part.subList(1, part.size());
+      }
       if (part.size() == 1 && part.get(0) instanceof Node.Group g && (g.is("[") || g.is("("))) {
         for (List<Node> item : g.items()) {
           entry(m, item, prefix, wrapper, visiting);
@@ -139,12 +229,17 @@ final class DjangoRoutes {
       if (c == null) {
         continue;
       }
-      if (c.lastName().equals("urls") && !c.endsWithCall()) {
+      if (Exprs.head(c).endsWith(".urls") && !c.endsWithCall()) {
         router(m, Exprs.head(c), prefix, wrapper);
       } else if (Exprs.firstCall(c) != null && !Set.of("path", "re_path", "url").contains(c.lastName())) {
-        for (List<Node> arg : Exprs.positional(Exprs.firstCall(c))) {
-          patterns(m, arg, prefix, wrapper, visiting);
+        // format_suffix_patterns([...]), i18n_patterns(*urls), list(urls)
+        for (List<Node> arg : Exprs.firstCall(c).items()) {
+          if (Exprs.keyword(arg) == null && !Nodes.isLeaf(arg.get(0), "**")) {
+            patterns(m, arg, prefix, wrapper, visiting);
+          }
         }
+      } else if (Exprs.firstCall(c) == null) {
+        named(m, part, prefix, wrapper, visiting);
       }
     }
   }
@@ -154,8 +249,10 @@ final class DjangoRoutes {
     Chain c = Exprs.chain(item);
     Chain.Call call = c == null ? null : Exprs.firstCall(c);
     if (call == null || !Set.of("path", "re_path", "url").contains(c.lastName())) {
-      if (c != null && c.lastName().equals("urls") && !c.endsWithCall()) {
+      if (c != null && Exprs.head(c).endsWith(".urls") && !c.endsWithCall()) {
         router(m, Exprs.head(c), prefix, wrapper);
+      } else if (call != null) {
+        dispatched(m, c, call, prefix, wrapper);
       }
       return;
     }
@@ -164,6 +261,54 @@ final class DjangoRoutes {
     if (view != null) {
       view(m, view, prefix + clean(route == null ? "" : route), wrapper, visiting);
     }
+  }
+
+  /**
+   * {@code rest_path("users", GET=list_users, POST=create_user)}: a project helper returning
+   * {@code path(route, dispatcher, handlers)}, one endpoint per HTTP method keyword. The dispatcher checking the user
+   * counts as the handlers' auth.
+   */
+  private void dispatched(Module m, Chain c, Chain.Call call, String prefix, String wrapper) {
+    Map<String, List<Node>> kwargs = Exprs.kwargs(call);
+    if (kwargs.keySet().stream().noneMatch(DjangoRoutes::methodKeyword)) {
+      return;
+    }
+    Function helper = model.function(m, Exprs.head(c));
+    Function dispatcher = null;
+    for (PyStatement s : helper == null ? List.<PyStatement>of() : helper.body()) {
+      for (PyStatement x : s.walk()) {
+        for (Chain pc : Chains.in(x.group())) {
+          List<Node> v = Set.of("path", "re_path").contains(pc.lastName()) && Exprs.firstCall(pc) != null
+            ? Exprs.arg(Exprs.firstCall(pc), 1, "view") : null;
+          String d = v == null ? null : Exprs.dotted(v);
+          dispatcher = d == null ? dispatcher : model.function(helper.module(), d);
+        }
+      }
+    }
+    if (dispatcher == null) {
+      return;
+    }
+    String route = Exprs.string(Exprs.arg(call, 0, "route"));
+    String w = wrapper != null ? wrapper
+      : AuthHints.checkingDecorator(dispatcher) ? "dispatched by " + dispatcher.name() + " in " + dispatcher.module().path() : null;
+    for (Map.Entry<String, List<Node>> kw : kwargs.entrySet()) {
+      if (!methodKeyword(kw.getKey())) {
+        continue;
+      }
+      List<Node> v = kw.getValue();
+      if (v.size() == 1 && v.get(0) instanceof Node.Group g && g.is("(") && !g.items().isEmpty()) {
+        v = g.items().get(0); // (handler, {"tag"})
+      }
+      String d = Exprs.dotted(v);
+      Function f = d == null ? null : model.function(m, d);
+      if (f != null) {
+        functionView(f, prefix + clean(route == null ? "" : route), w, List.of(kw.getKey()));
+      }
+    }
+  }
+
+  private static boolean methodKeyword(String k) {
+    return HANDLERS.contains(k.toLowerCase(Locale.ROOT)) && k.equals(k.toUpperCase(Locale.ROOT));
   }
 
   private void view(Module m, List<Node> view, String path, String wrapper, Set<Module> visiting) {
@@ -175,15 +320,21 @@ final class DjangoRoutes {
     List<Chain.Call> calls = v.calls();
     if (v.lastName().equals("include") && Exprs.firstCall(v) != null) {
       List<Node> arg = Exprs.arg(Exprs.firstCall(v), 0, null);
+      if (arg != null && arg.size() == 1 && arg.get(0) instanceof Node.Group t && t.is("(") && !t.items().isEmpty()) {
+        // include((patterns, "app_name"))
+        arg = t.items().get(0);
+      }
       Chain a = arg == null ? null : Exprs.chain(arg);
       if (arg != null && arg.size() == 1 && arg.get(0) instanceof Node.Group g && g.is("[")) {
         patterns(m, arg, path, wrapper, visiting);
-      } else if (a != null && a.lastName().equals("urls") && !a.endsWithCall()) {
+      } else if (a != null && Exprs.head(a).endsWith(".urls") && !a.endsWithCall()) {
         router(m, Exprs.head(a), path, wrapper);
       } else {
         Module t = includedModule(m, arg);
         if (t != null) {
           urlconf(t, path, wrapper, visiting);
+        } else if (arg != null) {
+          named(m, arg, path, wrapper, visiting);
         }
       }
       return;
@@ -207,7 +358,7 @@ final class DjangoRoutes {
     }
     Function f = model.function(m, head);
     if (f != null) {
-      functionView(f, path, wrapper);
+      functionView(f, path, wrapper, null);
     }
   }
 
@@ -261,8 +412,10 @@ final class DjangoRoutes {
     for (PyClass k : model.hierarchy(cls)) {
       for (Function f : k.methods()) {
         for (Decorator d : f.decorators()) {
-          if (d.last().equals("action")) {
-            boolean detail = d.call() != null && "True".equals(Exprs.text(orEmpty(Exprs.arg(d.call(), -1, "detail"))));
+          // @action(detail=...), and the list_route / detail_route of DRF before 3.8
+          if (d.last().equals("action") || d.last().equals("list_route") || d.last().equals("detail_route")) {
+            boolean detail = d.last().equals("detail_route")
+              || d.call() != null && "True".equals(Exprs.text(orEmpty(Exprs.arg(d.call(), -1, "detail"))));
             String urlPath = d.call() == null ? null : Exprs.string(Exprs.arg(d.call(), -1, "url_path"));
             List<String> methods = new ArrayList<>();
             if (d.call() != null) {
@@ -294,15 +447,23 @@ final class DjangoRoutes {
     }
     Set<String> inherited = new LinkedHashSet<>();
     provided(cls).stream().filter(x -> x.equals(x.toUpperCase(Locale.ROOT))).forEach(inherited::add);
+    boolean handled = false;
     for (String h : HANDLERS) {
       Function f = model.method(cls, h);
       if (f != null) {
+        handled = true;
         add(cls, f, List.of(h.toUpperCase(Locale.ROOT)), path, h, wrapper);
         inherited.remove(h.toUpperCase(Locale.ROOT));
       }
     }
     if (!inherited.isEmpty()) {
       add(cls, null, List.copyOf(inherited), path, null, wrapper);
+    } else if (!handled) {
+      // a view that does everything in its own dispatch()
+      Function dispatch = model.method(cls, "dispatch");
+      if (dispatch != null) {
+        add(cls, dispatch, List.of("ANY"), path, "dispatch", wrapper);
+      }
     }
   }
 
@@ -322,7 +483,7 @@ final class DjangoRoutes {
       f != null ? f.token() : cls.token(), label, auth, f != null && f.isAsync(), AuthHints.writes(f)));
   }
 
-  private void functionView(Function f, String path, String wrapper) {
+  private void functionView(Function f, String path, String wrapper, List<String> given) {
     List<String> methods = new ArrayList<>();
     boolean drf = false;
     for (Decorator d : f.decorators()) {
@@ -346,6 +507,10 @@ final class DjangoRoutes {
         default -> {
         }
       }
+    }
+    if (given != null) {
+      methods.clear();
+      methods.addAll(given);
     }
     if (methods.isEmpty()) {
       Matcher mm = METHOD_CHECK.matcher(AuthHints.bodyText(f));
@@ -388,6 +553,11 @@ final class DjangoRoutes {
     }
     if (wrapper != null) {
       return Endpoint.Auth.by(wrapper);
+    }
+    for (Decorator d : f.decorators()) {
+      if (AuthHints.checkingDecorator(model.function(f.module(), d.name()))) {
+        return Endpoint.Auth.by("@" + d.name());
+      }
     }
     if (AuthHints.BODY.matcher(AuthHints.bodyText(f)).find()) {
       return Endpoint.Auth.by("checks request.user in the body");

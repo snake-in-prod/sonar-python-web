@@ -10,7 +10,7 @@ import java.util.Map;
 
 /**
  * pw_endpoints_json: an array with one object per endpoint: {@code path}, {@code methods}, {@code framework} (django,
- * drf, fastapi, flask), {@code function} ("create_item", "ItemViewSet.create"), {@code file}, {@code line}, {@code auth}
+ * drf, fastapi, flask, aiohttp), {@code function} ("create_item", "ItemViewSet.create"), {@code file}, {@code line}, {@code auth}
  * (the evidence, or null), {@code protected}, {@code async}, {@code mutating} and {@code issues} (issues within the
  * handler's lines, or the view class's when the handler is inherited).
  */

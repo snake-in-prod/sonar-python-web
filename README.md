@@ -1,14 +1,14 @@
 # Python web rules for SonarQube
 
 A SonarQube plugin with framework-aware security and correctness rules for Django (Django REST framework included),
-FastAPI and Flask, for SonarQube Community Build, whose bundled Python analyzer has no taint analysis. It builds a
+FastAPI, Flask and aiohttp, for SonarQube Community Build, whose bundled Python analyzer has no taint analysis. It builds a
 model of the app's endpoints (routes, views, their authentication) and follows request data across functions,
 modules and instance attributes to SQL, shell, file, URL fetch, redirect, template and deserialization sinks. Each issue names the endpoint
 and shows the path as secondary locations.
 
 The rules were validated on about 40 code bases: Django and DRF apps (netbox, saleor, zulip, wagtail, healthchecks,
-taiga), FastAPI and Flask apps (polar, dispatch, full-stack-fastapi-template, flaskbb, redash), deliberately vulnerable
-apps (pygoat, Vulnerable-Flask-App) and repositories found by code search. Every issue was reviewed by hand and every
+taiga), FastAPI and Flask apps (polar, dispatch, full-stack-fastapi-template, flaskbb, redash), aiohttp apps (PlanarAlly,
+bananas-api, r8), deliberately vulnerable apps (pygoat, Vulnerable-Flask-App, dvpwa) and repositories found by code search. Every issue was reviewed by hand and every
 false positive pattern fixed, so that each rule is right in at least 9 of 10 cases. The largest apps (saleor, zulip,
 netbox) take about 12 s.
 
@@ -18,7 +18,7 @@ Requires SonarQube Community Build 26.7 or later (tested on 26.7 with the commun
 included, and on 26.10) and Java 21. Download `sonar-python-web-<version>.jar` from the
 [releases](https://github.com/snake-in-prod/sonar-python-web/releases), copy it to `extensions/plugins/` and restart;
 then assign the "Python Web" profile or add its rules to your own Python profile. To build it yourself: `./mvnw verify`. The plugin analyses py files of projects
-that import Django, FastAPI, Starlette or Flask; other projects are skipped.
+that import Django, FastAPI, Starlette, Flask or the aiohttp server; other projects are skipped.
 
 ## Rules
 

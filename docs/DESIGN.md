@@ -1,7 +1,7 @@
 # Design
 
 One plugin, key `pythonweb`, for SonarQube 10.12 and later (built against plugin API 14.2). It adds framework-aware
-security and correctness rules for Django (Django REST framework included), FastAPI and Flask to SonarQube Community
+security and correctness rules for Django (Django REST framework included), FastAPI, Flask and aiohttp to SonarQube Community
 Build, whose bundled Python analyzer has no taint analysis. It does not repeat the built-in Python rules (hard-coded
 credentials, Django DEBUG, CSRF middleware disabled).
 
@@ -14,7 +14,7 @@ over it. Rules are small checks on both.
 py files (model.Project: paths + read)
   -> WebModel.build: each file -> ParsedFile (PythonLexer -> tokens -> TreeBuilder -> PyModule statements)
      -> Module (functions, classes, module-level assignments, frameworks from imports)
-     -> endpoints: FastApiRoutes, DjangoRoutes, FlaskRoutes
+     -> endpoints: FastApiRoutes, DjangoRoutes, FlaskRoutes, AiohttpRoutes
   -> TaintEngine.run: per-function summaries to a fixpoint, then findings (models/taint.json)
   -> sensor.Analyzer: every rule on every module -> issues with secondary locations
   -> PwMetrics.fileValues -> pw_* on files -> PwAggregator sums to directories and the project
@@ -23,7 +23,8 @@ py files (model.Project: paths + read)
 
 `PythonWebSensor` (SonarQube), `cli.Scan` (command line) and the tests (`RuleVerifier`) all go through
 `WebModel.build`, `TaintEngine.run` and `Analyzer`, so they see the same results. The sensor runs on py, builds the
-model once and does nothing when no file imports django, rest_framework, fastapi, starlette or flask. The analyzer
+model once and does nothing when no file imports django, rest_framework, fastapi, starlette, flask or the aiohttp server
+(`aiohttp.web`, aiohttp_security, aiohttp_session; the aiohttp client alone does not count). The analyzer
 runs every rule; the sensor saves the issues of the rules active in the quality profile. The issue counts in the
 measures include inactive rules.
 
@@ -101,6 +102,19 @@ above the file (deepest first) and its `src/`, so a Django app beside manage.py 
   that check the caller, a view class's `decorators` / `method_decorators`, checks in the body, `before_request`
   guards of the blueprint or the app whose body checks the user and can stop the request (abort, redirect, raise,
   return a response; a hook that only loads `g.user` is not one).
+- aiohttp: `@routes.get/post/put/patch/delete/head/route/view(path)` of a `web.RouteTableDef()` (functions, and
+  `web.View` classes for `view`), `x.router.add_get/add_post/.../add_route(method, path, h)/add_view(path, h)` on any
+  receiver ending in "router", `web.get/post/.../route/view(path, h)` wherever they are built (in `app.add_routes([...])`
+  or a list). The handler is a function (a nested one in the factory included), `self.method` of the registering class,
+  or a class: one endpoint per verb method (all of them for "*" and views). A handler and path registered for several
+  methods is one endpoint. An f-string path keeps its literal parts (`f"{base}/rooms/{{name}}"` gives "/rooms/{name}").
+  `add_subapp` prefixes and routes a registry builds at run time are not followed. Auth: an auth decorator or a project
+  decorator that checks the caller, aiohttp_security `check_authorized` / `check_permission(s)` / `permits` in the
+  handler, `authorized_userid` with an `HTTPUnauthorized` or a redirect to a login page, an aiohttp_session login
+  check (`get_session` read, then `HTTPUnauthorized` or a redirect to a login page), a user test; the same in a helper
+  the handler calls (two calls deep), or a helper that reads a credential and refuses with 401 / 403; else an auth
+  middleware (`web.Application(middlewares=[...])`, `app.middlewares.append(...)`) whose code checks the caller, for
+  every aiohttp endpoint.
 
 ## The taint engine (package `taint`)
 
@@ -109,7 +123,8 @@ above the file (deepest first) and its `src/`, so a Django app beside manage.py 
 
 Sources: request objects (a parameter named request or typed Request / HttpRequest, `self.request` in methods,
 `flask.request`) read through the `requestAttributes` of the models (GET, POST, body, FILES, COOKIES, META, headers,
-data, query_params, json, form, args, values, files, get_json, path...; not request.url or get_full_path(), which
+data, query_params, json, form, args, values, files, get_json, path, aiohttp query, match_info, post, text...;
+`request.rel_url.query` too; not request.url or get_full_path(), which
 come percent-encoded); FastAPI endpoint parameters that are not dependencies, requests or responses (query, path and
 body parameters, Pydantic models, UploadFile); Django and Flask URL parameters not declared int, float, uuid or slug,
 nor matched by a digits-only regex group (`(\d+)`, `(?P<pk>[0-9]+)`).
@@ -207,7 +222,7 @@ An issue must be a real defect in at least 9 of 10 cases on real public apps (`c
 On files: pw_endpoints, pw_mutating_endpoints, pw_async_endpoints (from the model), pw_unprotected_endpoints (issues
 of EndpointWithoutAuth), pw_blocking_calls (issues of BlockingCallInAsync), pw_taint_findings (issues of the rules
 with a sink kind); `PwAggregator` sums them. pw_endpoints_json, on the project: one object per endpoint with `path`,
-`methods`, `framework` (django, drf, fastapi, flask), `function`, `file`, `line`, `auth` (the evidence or null),
+`methods`, `framework` (django, drf, fastapi, flask, aiohttp), `function`, `file`, `line`, `auth` (the evidence or null),
 `protected`, `async`, `mutating`, `issues` (within the handler's lines). pw_app_json: the file measures summed over
 every file, for pull requests, where SonarQube keeps only the changed files' measures.
 

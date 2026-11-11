@@ -239,6 +239,10 @@ public final class TaintEngine {
           }
           continue;
         }
+        if (e.framework() == Framework.AIOHTTP) {
+          // aiohttp handlers take the request only; URL parameters come from request.match_info
+          continue;
+        }
         Map<String, String> declared = new HashMap<>();
         Matcher pm = PATH_PARAM.matcher(e.path());
         while (pm.find()) {
@@ -841,6 +845,11 @@ public final class TaintEngine {
       int k = names.size();
       for (int j = 1; j <= k; j++) {
         if (isRequestObject(join(names, j), env)) {
+          if (j + 1 < k && names.get(j).text().equals("rel_url") && names.get(j + 1).text().equals("query")) {
+            // aiohttp request.rel_url.query
+            String label = "request.rel_url.query";
+            return rest(Taint.source(label, new Step(m, names.get(j + 1), label + " read here"), fn), segs, j + 2);
+          }
           if (j < k && models.requestAttributes.contains(names.get(j).text())) {
             String label = "request." + names.get(j).text();
             return rest(Taint.source(label, new Step(m, names.get(j), label + " read here"), fn), segs, j + 1);

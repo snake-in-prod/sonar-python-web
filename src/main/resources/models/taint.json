@@ -3,7 +3,7 @@
   "sources": {
     "requestAttributes": ["GET", "POST", "body", "FILES", "COOKIES", "META", "headers", "data", "query_params", "path_params",
       "json", "form", "args", "values", "files", "cookies", "get_json", "get_data", "stream", "read", "query_string", "DATA", "QUERY_PARAMS",
-      "path"],
+      "path", "query", "match_info", "post", "text", "content", "multipart"],
     "globalRequests": ["flask.request", "quart.request"],
     "requestTypes": ["Request", "HttpRequest", "WSGIRequest", "ASGIRequest"],
     "notInputs": ["Request", "Response", "BackgroundTasks", "WebSocket", "Session", "AsyncSession", "HTTPConnection",

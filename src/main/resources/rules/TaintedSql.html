@@ -1,7 +1,8 @@
 <p>Request data that is pasted into an SQL string lets the caller change the query: read other rows, bypass a
 <code>WHERE</code> clause, or modify and drop tables. This rule follows request inputs (Django <code>request.GET</code>,
 <code>POST</code>, DRF <code>request.data</code>, FastAPI query, path and body parameters, Flask <code>request.args</code>,
-<code>form</code>, <code>json</code>, URL parameters) across functions and modules to raw SQL: <code>cursor.execute()</code>
+<code>form</code>, <code>json</code>, URL parameters, aiohttp <code>request.query</code>, <code>match_info</code>,
+<code>await request.post()</code> and <code>json()</code>) across functions and modules to raw SQL: <code>cursor.execute()</code>
 and its variants, Django <code>raw()</code>, <code>extra()</code> and <code>RawSQL</code>, SQLAlchemy <code>text()</code> and
 <code>execute()</code>, asyncpg and <code>databases</code> fetch methods, and <code>pandas.read_sql()</code>.</p>
 <p>It reports only when the query string is built on the way, with an f-string, <code>%</code>, <code>+</code> or

@@ -23,7 +23,7 @@ public class PwMetrics implements Metrics {
   public static final String DOMAIN = "Python Web";
 
   public static final Metric<Integer> ENDPOINTS = intMetric("pw_endpoints", "Endpoints",
-    "FastAPI routes, Django views (class-based view handlers and ViewSet actions each) and Flask routes", Metric.DIRECTION_NONE,
+    "FastAPI routes, Django views (class-based view handlers and ViewSet actions each), Flask and aiohttp routes", Metric.DIRECTION_NONE,
     false);
   public static final Metric<Integer> MUTATING_ENDPOINTS = intMetric("pw_mutating_endpoints", "Mutating endpoints",
     "Endpoints for POST, PUT, PATCH or DELETE, and Django views open to any method that write", Metric.DIRECTION_NONE, false);

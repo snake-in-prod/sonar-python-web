@@ -57,7 +57,7 @@ public final class Scan {
     }
     WebModel model = WebModel.build(project(root, paths));
     if (!model.hasFramework()) {
-      System.out.println("== no file imports Django, FastAPI or Flask");
+      System.out.println("== no file imports Django, FastAPI, Flask or aiohttp");
       return;
     }
     model.skipped().forEach(s -> System.err.println("SKIPPED " + s));

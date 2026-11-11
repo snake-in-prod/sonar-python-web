@@ -452,4 +452,80 @@ class WebModelTest {
         """);
     assertThat(apps.endpoints()).extracting(Endpoint::path).containsExactlyInAnyOrder("/apks", "/status");
   }
+
+  @Test
+  void aiohttp_route_tables_routers_route_defs_views_and_auth() {
+    WebModel model = TestProjects.model("aiohttp");
+    assertThat(model.frameworks()).containsExactly(Framework.AIOHTTP);
+    // the aiohttp client alone is not the framework
+    assertThat(model.module("shop/client.py").frameworks()).isEmpty();
+    assertThat(model.endpoints()).hasSize(17).allMatch(e -> e.framework() == Framework.AIOHTTP && e.async());
+
+    assertThat(endpoint(model, "GET", "/items").auth().present()).isFalse();
+    assertThat(endpoint(model, "POST", "/items").auth().evidence()).isEqualTo("check_authorized in the body");
+    assertThat(endpoint(model, "DELETE", "/items/{id}").auth().present()).isFalse();
+    // a helper of a helper refuses an unknown caller
+    assertThat(endpoint(model, "PUT", "/items/{id}").auth().evidence()).isEqualTo("owner() checks the caller");
+    // a login page that sends a known user away checks nobody
+    assertThat(endpoint(model, "GET", "/login").auth().present()).isFalse();
+    assertThat(endpoint(model, "POST", "/cart").auth().evidence()).isEqualTo("session check in the body");
+
+    Endpoint orders = endpoint(model, "POST", "/orders");
+    assertThat(orders.viewClass().name()).isEqualTo("OrderView");
+    assertThat(orders.auth().evidence()).isEqualTo("check_authorized in the body");
+    assertThat(endpoint(model, "GET", "/orders").auth().present()).isFalse();
+
+    // add_get and web.post of one handler and path are one endpoint
+    assertThat(endpoint(model, "GET", "/ping").methods()).containsExactly("GET", "POST");
+    // an f-string path keeps its literal parts
+    assertThat(endpoint(model, "POST", "/uploads/{name}").label()).isEqualTo("upload");
+    // a class handler: one endpoint per verb method, for add_route("*") and add_view
+    assertThat(model.endpoints()).filteredOn(e -> e.label().startsWith("ReportView."))
+      .extracting(e -> e.methods().get(0) + " " + e.path())
+      .containsExactlyInAnyOrder("GET /reports/{id}", "DELETE /reports/{id}", "GET /reports", "DELETE /reports");
+    // a handler defined in the factory, and methods registered with self
+    assertThat(endpoint(model, "GET", "/health").label()).isEqualTo("health");
+    assertThat(endpoint(model, "POST", "/api/jobs").label()).isEqualTo("Api.submit");
+  }
+
+  @Test
+  void aiohttp_auth_middleware_registered_on_the_app() {
+    String views = """
+      from aiohttp import web
+
+      async def delete_note(request):
+          return web.Response()
+
+      def setup(app):
+          app.router.add_delete("/notes/{id}", delete_note)
+      """;
+    WebModel guarded = TestProjects.model("notes/views.py", views, "notes/app.py", """
+      from aiohttp import web
+      from .views import setup
+
+      @web.middleware
+      async def token_middleware(request, handler):
+          if request.headers.get("Authorization") != "Bearer x":
+              raise web.HTTPUnauthorized()
+          return await handler(request)
+
+      app = web.Application(middlewares=[token_middleware])
+      setup(app)
+      """);
+    assertThat(endpoint(guarded, "DELETE", "/notes/{id}").auth().evidence()).isEqualTo("middleware token_middleware");
+
+    WebModel logged = TestProjects.model("notes/views.py", views, "notes/app.py", """
+      from aiohttp import web
+      from .views import setup
+
+      @web.middleware
+      async def timing(request, handler):
+          return await handler(request)
+
+      app = web.Application()
+      app.middlewares.append(timing)
+      setup(app)
+      """);
+    assertThat(endpoint(logged, "DELETE", "/notes/{id}").auth().present()).isFalse();
+  }
 }

@@ -29,7 +29,7 @@ import org.sonar.api.rule.RuleKey;
 /**
  * Builds the model of the project's Python files once, runs the taint engine and the rules, saves the issues of the
  * active rules (with their secondary locations) and the pw_* measures. Does nothing when no file imports Django, DRF,
- * FastAPI, Starlette or Flask. Test files are read for nothing and get no issue.
+ * FastAPI, Starlette, Flask or aiohttp. Test files are read for nothing and get no issue.
  */
 public class PythonWebSensor implements Sensor {
 
@@ -63,7 +63,7 @@ public class PythonWebSensor implements Sensor {
       }
     });
     if (!model.hasFramework()) {
-      LOG.info("Python Web: no file imports Django, FastAPI or Flask, nothing to analyse");
+      LOG.info("Python Web: no file imports Django, FastAPI, Flask or aiohttp, nothing to analyse");
       return;
     }
     model.skipped().forEach(s -> LOG.warn("Python Web: skipped {}", s));

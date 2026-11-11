@@ -25,7 +25,7 @@ import java.util.regex.Pattern;
 
 /**
  * A mutating endpoint (PUT, PATCH, DELETE; POST or a Django view open to any method when it writes) with no check of
- * the caller, in an app where other endpoints do check it (for Flask and FastAPI, the app is the set of modules imports
+ * the caller, in an app where other endpoints do check it (for Flask, FastAPI and aiohttp, the app is the set of modules imports
  * connect, so the separate apps of one repository are judged apart). Silent when the endpoint is explicitly open
  * (AllowAny), looks public by its name (login, signup, webhook...), counts visits (POST .../view), says it is open in a
  * comment just above it, checks something in its body or a helper, takes a dependency that names a user, or when the
@@ -106,12 +106,12 @@ public class EndpointWithoutAuth implements PwRule {
   }
 
   /**
-   * Some endpoint of the same app checks its caller. A Flask or FastAPI app is the set of modules its imports connect,
+   * Some endpoint of the same app checks its caller. A Flask, FastAPI or aiohttp app is the set of modules its imports connect,
    * so independent apps in one repository (lab apps, microservices) are judged apart; Django apps are tied by
    * include() strings, so a Django project counts as one app.
    */
   private boolean sameAppChecks(Endpoint e, List<Endpoint> protectedOnes) {
-    if (e.framework() != Framework.FLASK && e.framework() != Framework.FASTAPI) {
+    if (e.framework() != Framework.FLASK && e.framework() != Framework.FASTAPI && e.framework() != Framework.AIOHTTP) {
       return true;
     }
     Module app = root(apps, e.module());
@@ -310,6 +310,7 @@ public class EndpointWithoutAuth implements PwRule {
       case DRF -> "permission_classes";
       case DJANGO -> "@login_required or an auth mixin";
       case FLASK -> "@login_required or a before_request guard";
+      case AIOHTTP -> "await check_authorized(request) or an auth middleware";
     };
   }
 }

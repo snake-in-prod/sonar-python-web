@@ -46,7 +46,8 @@ final class FastApiRoutes {
   }
 
   private List<Endpoint> run() {
-    List<Module> fastapi = model.modules().stream().filter(m -> !m.isTest() && m.frameworks().contains(Framework.FASTAPI)).toList();
+    // every module: a route module may import only the project's own router class
+    List<Module> fastapi = model.modules().stream().filter(m -> !m.isTest()).toList();
     for (Module m : fastapi) {
       for (PyStatement s : m.py().walk()) {
         List<List<Node>> parts = Exprs.assignment(s.nodes());
@@ -56,8 +57,7 @@ final class FastApiRoutes {
         if (call == null || var == null || Exprs.headSize(c) + 1 != c.segments().size()) {
           continue;
         }
-        String callee = m.resolve(Exprs.head(c));
-        if (callee.startsWith("fastapi.") && (callee.endsWith(".FastAPI") || callee.endsWith(".APIRouter"))) {
+        if (routerFactory(m, Exprs.head(c))) {
           String prefix = Exprs.string(Exprs.arg(call, -1, "prefix"));
           List<Node> deps = Exprs.arg(call, -1, "dependencies");
           routers.put(m.path() + "#" + var, new Router(m, var, prefix == null ? "" : prefix, deps == null ? List.of() : deps));
@@ -98,6 +98,28 @@ final class FastApiRoutes {
       }
     }
     return out;
+  }
+
+  /**
+   * A call that makes an app or router: fastapi's FastAPI / APIRouter, a project alias named so ({@code
+   * BackofficeRouter = make_router_class(...)}), or a project subclass of one.
+   */
+  private boolean routerFactory(Module m, String head) {
+    String callee = m.resolve(head);
+    String last = callee.substring(callee.lastIndexOf('.') + 1);
+    if (callee.startsWith("fastapi.") && (last.equals("FastAPI") || last.equals("APIRouter"))) {
+      return true;
+    }
+    WebModel.Ref r = model.locate(m, head);
+    if (r == null) {
+      return false;
+    }
+    if (last.equals("FastAPI") || last.endsWith("APIRouter") || last.endsWith("Router") && model.cls(m, head) == null) {
+      return true;
+    }
+    PyClass cls = model.cls(m, head);
+    return cls != null && model.externalBases(cls).stream()
+      .anyMatch(b -> b.startsWith("fastapi.") && (b.endsWith(".FastAPI") || b.endsWith(".APIRouter")));
   }
 
   /** The router a name denotes in a module: one assigned in that module (anywhere), or one it imports. */
@@ -217,7 +239,9 @@ final class FastApiRoutes {
     if (value != null) {
       Chain v = Exprs.chain(value);
       WebModel.Ref r = model.locate(m, head);
-      if (v != null && r.module().resolve(Exprs.head(v)).startsWith("fastapi.security")) {
+      if (v != null && (r.module().resolve(Exprs.head(v)).startsWith("fastapi.security")
+        || Exprs.firstCall(v) != null && AuthHints.DEPENDENCY.matcher(Exprs.head(v)).find()
+        || AuthHints.AUTH_MODULE.matcher(r.module().path()).find())) {
         return true;
       }
     }

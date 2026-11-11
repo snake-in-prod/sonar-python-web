@@ -107,6 +107,18 @@ public final class Function {
     return owner != null && decorators.stream().noneMatch(d -> d.name().equals("staticmethod"));
   }
 
+  /** The return annotation ({@code -> Session}), empty when there is none. */
+  public List<Node> returns() {
+    List<Node> nodes = def.nodes();
+    for (int i = 0; i < nodes.size(); i++) {
+      if (Nodes.isLeaf(nodes.get(i), "->")) {
+        int end = Nodes.isLeaf(nodes.get(nodes.size() - 1), ":") ? nodes.size() - 1 : nodes.size();
+        return i + 1 < end ? nodes.subList(i + 1, end) : List.of();
+      }
+    }
+    return List.of();
+  }
+
   private static List<Param> params(PyStatement def) {
     int i = def.isAsync() ? 3 : 2;
     List<Node> nodes = def.nodes();

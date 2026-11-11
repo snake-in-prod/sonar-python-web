@@ -23,3 +23,9 @@ class Device(Base):
     __tablename__ = "device"
     id = Column(Integer, primary_key=True)
     secret = deferred(Column(String))
+
+
+class Integration(Base):
+    __tablename__ = "integration"
+    id = Column(Integer, primary_key=True)
+    client_secret_last_4 = Column(String)

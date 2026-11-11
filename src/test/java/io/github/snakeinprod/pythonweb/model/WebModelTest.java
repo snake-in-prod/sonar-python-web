@@ -224,6 +224,112 @@ class WebModelTest {
   }
 
   @Test
+  void fastapi_project_router_classes_and_authenticator_aliases() {
+    WebModel model = TestProjects.model(
+      "app/routing.py", """
+        from fastapi import APIRouter as _APIRouter
+        def router_class(route):
+            class _Router(_APIRouter):
+                pass
+            return _Router
+        APIRouter = router_class(None)
+        AdminRouter = router_class(None)
+        """,
+      "app/items/auth.py", """
+        from typing import Annotated
+        from fastapi import Depends
+        from app.authn import Authenticator
+        _Write = Authenticator(scopes={"items:write"})
+        ItemsWrite = Annotated[object, Depends(_Write)]
+        """,
+      "app/items/endpoints.py", """
+        from fastapi import Depends
+        from app.routing import APIRouter, AdminRouter
+        from . import auth
+        router = APIRouter(prefix="/items")
+        admin = AdminRouter()
+
+        @router.post("/")
+        async def create(subject: auth.ItemsWrite):
+            return {}
+
+        @admin.delete("/{id}")
+        async def purge(id: int):
+            return {}
+        """);
+    assertThat(endpoint(model, "POST", "/items/").auth().evidence()).isEqualTo("Depends(_Write) on parameter subject");
+    assertThat(endpoint(model, "DELETE", "/{id}").auth().present()).isFalse();
+  }
+
+  @Test
+  void flask_view_helpers_method_views_restful_resources_and_loader_hooks() {
+    WebModel model = TestProjects.model(
+      "forum/helpers.py", """
+        def register_view(bp, routes, view_func):
+            for route in routes:
+                bp.add_url_rule(route, view_func=view_func)
+        """,
+      "forum/views.py", """
+        from flask import Blueprint, g, session
+        from flask.views import MethodView
+        from flask_login import login_required
+        from forum.helpers import register_view
+
+        class NewTopic(MethodView):
+            decorators = [login_required]
+            def get(self):
+                return ""
+            def post(self):
+                return ""
+
+        class Search(MethodView):
+            def post(self):
+                return ""
+
+        def load_blueprint(app):
+            bp = Blueprint("forum", __name__)
+
+            @bp.before_request
+            def load_user():
+                g.user = session.get("user_id")
+
+            register_view(bp, routes=["/topic/new", "/t/new"], view_func=NewTopic.as_view("new_topic"))
+            register_view(bp, routes=["/search"], view_func=Search.as_view("search"))
+            app.register_blueprint(bp)
+        """,
+      "api/resources.py", """
+        from flask_login import login_required
+        from flask_restful import Resource
+        class Base(Resource):
+            decorators = [login_required]
+        class Alert(Base):
+            def get(self, alert_id):
+                return {}
+            def delete(self, alert_id):
+                return {}
+        """,
+      "api/routes.py", """
+        from flask import make_response
+        from flask_restful import Api
+        from api.resources import Alert
+        def scoped(rule):
+            return "/<org_slug>" + rule
+        class ApiExt(Api):
+            def add_org_resource(self, resource, *urls, **kwargs):
+                return self.add_resource(resource, *[scoped(u) for u in urls], **kwargs)
+        api = ApiExt()
+        api.add_org_resource(Alert, "/api/alerts/<alert_id>", endpoint="alert")
+        """);
+    assertThat(model.endpoints()).hasSize(7);
+    assertThat(endpoint(model, "POST", "/t/new").auth().evidence()).isEqualTo("decorators = [login_required] on NewTopic");
+    // a before_request hook that only loads the user does not guard anything
+    assertThat(endpoint(model, "POST", "/search").auth().present()).isFalse();
+    Endpoint delete = endpoint(model, "DELETE", "/api/alerts/<alert_id>");
+    assertThat(delete.viewClass().name()).isEqualTo("Alert");
+    assertThat(delete.auth().evidence()).isEqualTo("decorators = [login_required] on Base");
+  }
+
+  @Test
   void imports_resolve_to_project_functions_and_classes() {
     WebModel model = TestProjects.model("fastapi");
     Module items = model.module("app/routers/items.py");

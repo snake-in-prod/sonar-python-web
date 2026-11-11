@@ -10,7 +10,7 @@ from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from .db import SessionDep, get_async_db, get_db
+from .db import SessionDep, get_async_db, get_db, open_session
 from .services import fetch_rates, load_report, notify_async, read_config
 
 app = FastAPI()
@@ -70,6 +70,16 @@ async def rates_sync():
 @router.get("/report")
 async def report():
     return load_report("daily")  # Noncompliant [[2]]
+
+
+def load_tenant_items(tenant):
+    session = open_session(tenant)
+    return session.query(Item).all()
+
+
+@router.get("/tenants/{tenant}/items")
+async def tenant_items(tenant: str):
+    return load_tenant_items(tenant)  # Noncompliant {{load_tenant_items() makes a blocking call (session.query())}} [[1]]
 
 
 @router.post("/notify")

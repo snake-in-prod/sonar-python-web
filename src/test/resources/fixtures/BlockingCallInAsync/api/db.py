@@ -8,6 +8,10 @@ def get_db():
     yield Session()
 
 
+def open_session(tenant: str) -> Session:
+    return Session()
+
+
 async def get_async_db():
     yield None
 

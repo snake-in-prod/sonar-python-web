@@ -35,7 +35,9 @@ public class ResponseModelLeak implements PwRule {
   /** A class field that must not reach a client. */
   private static final Pattern SECRET_FIELD = Pattern.compile("(?i)password|passwd|secret|private_key|^hashed_|_hash$");
   private static final Pattern NOT_SECRET = Pattern.compile("(?i)^(has|is|must|requires?|needs?|show|use)_|"
-    + "_(at|on|date|changed|updated|expires|expiry|expiration|set|required|length|policy|hint|sent|count|enabled)$|^(content|file|commit)_hash$");
+    + "_(at|on|date|changed|updated|expires|expiry|expiration|set|required|length|policy|hint|sent|count|enabled|prefix|suffix|masked|last_?\\d+)$|^(content|file|commit)_hash$");
+  /** A stored password or hash: the only secret a Pydantic schema declares by mistake (a client_secret or webhook secret is its purpose). */
+  private static final Pattern STORED = Pattern.compile("(?i)password|passwd|^hashed_|_hash$");
   /** A dict key that is a stored password. */
   private static final Pattern SECRET_KEY = Pattern.compile("(?i)password|passwd|hashed_pw|pwd_hash|password_digest");
   private static final Set<String> VERBS = Set.of("get", "post", "put", "patch", "delete", "api_route");
@@ -66,7 +68,7 @@ public class ResponseModelLeak implements PwRule {
       String where = String.join("|", e.methods()) + " " + e.path();
       List<Node> declared = kw.get("response_model");
       if (declared == null || !"None".equals(Exprs.text(declared))) {
-        List<Node> annotation = declared != null ? declared : returnAnnotation(f);
+        List<Node> annotation = declared != null ? declared : f.returns().isEmpty() ? null : f.returns();
         if (annotation != null) {
           List<PyClass> classes = classes(model, f.module(), annotation);
           Leak leak = classes.stream().map(c -> secret(model, c)).filter(l -> l != null).findFirst().orElse(null);
@@ -107,17 +109,6 @@ public class ResponseModelLeak implements PwRule {
   private static List<Node> value(PyStatement r) {
     List<Node> v = r.nodes().subList(1, r.nodes().size());
     return !v.isEmpty() && Nodes.isIdent(v.get(0), "await") ? v.subList(1, v.size()) : v;
-  }
-
-  private static List<Node> returnAnnotation(Function f) {
-    List<Node> nodes = f.def().nodes();
-    for (int i = 0; i < nodes.size(); i++) {
-      if (Nodes.isLeaf(nodes.get(i), "->")) {
-        int end = Nodes.isLeaf(nodes.get(nodes.size() - 1), ":") ? nodes.size() - 1 : nodes.size();
-        return end > i + 1 ? nodes.subList(i + 1, end) : null;
-      }
-    }
-    return null;
   }
 
   /** The project classes named in a type expression: {@code User}, {@code list[schemas.User]}, {@code Optional[User]}. */
@@ -261,12 +252,16 @@ public class ResponseModelLeak implements PwRule {
     }
   }
 
-  /** The first secret field of a class or its project bases, or null; SecretStr, excluded and deferred fields do not count. */
+  /**
+   * The first secret field of a class or its project bases, or null; SecretStr, excluded and deferred fields do not count,
+   * nor, on a Pydantic schema, a secret that is not a stored password (a schema declaring client_secret means to send it).
+   */
   private static Leak secret(WebModel model, PyClass c) {
     List<PyClass> hierarchy = model.hierarchy(c);
     if (hierarchy.stream().anyMatch(k -> k.method("dict") != null || k.method("model_dump") != null || k.method("__iter__") != null)) {
       return null;
     }
+    boolean schema = model.externalBases(c).stream().anyMatch(b -> b.startsWith("pydantic."));
     for (PyClass k : hierarchy) {
       for (PyStatement s : k.statement().body()) {
         List<Node> nodes = s.nodes();
@@ -277,6 +272,7 @@ public class ResponseModelLeak implements PwRule {
         }
         String rest = Exprs.text(nodes.subList(2, nodes.size()));
         if (SECRET_FIELD.matcher(name.text()).find() && !NOT_SECRET.matcher(name.text()).find()
+          && (!schema || STORED.matcher(name.text()).find())
           && !rest.matches("(?s).*(Secret(Str|Bytes)|exclude=True|deferred\\(|deferred=True).*")) {
           return new Leak(c.name(), name.text(), new Step(k.module(), name, name.text() + " is a field of " + k.name()));
         }

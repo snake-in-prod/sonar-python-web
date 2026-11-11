@@ -367,4 +367,68 @@ class TaintEngineTest {
     });
     assertThat(r.findings()).isEmpty();
   }
+
+  @Test
+  void request_data_stored_on_self_reaches_sinks_in_other_methods() {
+    List<Finding> found = findings("app.py", """
+      import requests
+      from flask import Flask, request
+      from app import config
+
+      app = Flask(__name__)
+
+      class Report:
+          def __init__(self):
+              self.table = request.args["table"]
+              self.api_url = config.API_URL
+              self.limit = int(request.args.get("limit", 10))
+
+          def rows(self, cursor):
+              cursor.execute(f"SELECT * FROM {self.table} LIMIT {self.limit}")
+              requests.get(self.api_url + "/rows")
+
+      class Child(Report):
+          def dump(self):
+              open(self.table)
+
+      class Other:
+          def dump(self):
+              open(self.table)
+
+      @app.route("/report")
+      def report():
+          return Child().dump()
+      """);
+    assertThat(found).extracting(Finding::kind).containsExactlyInAnyOrder("sql", "path");
+    Finding sql = found.stream().filter(f -> f.kind().equals("sql")).findFirst().orElseThrow();
+    assertThat(sql.label()).isEqualTo("request.args");
+    assertThat(sql.sink().token().line()).isEqualTo(14);
+    assertThat(messages(sql)).containsExactly("request.args read here", "assigned to self.table", "reaches cursor.execute()");
+  }
+
+  @Test
+  void a_base_class_method_reads_what_a_subclass_stores_on_self() {
+    List<Finding> found = findings("app.py", """
+      import os
+      from flask import Flask, request
+
+      app = Flask(__name__)
+
+      class Task:
+          def run(self):
+              os.system(self.cmd)
+
+      class EchoTask(Task):
+          def prepare(self):
+              self.cmd = "echo " + request.form["text"]
+
+      class UptimeTask(Task):
+          def prepare(self):
+              self.cmd = "uptime"
+      """);
+    assertThat(found).singleElement().satisfies(f -> {
+      assertThat(f.kind()).isEqualTo("command");
+      assertThat(f.sink().token().line()).isEqualTo(8);
+    });
+  }
 }

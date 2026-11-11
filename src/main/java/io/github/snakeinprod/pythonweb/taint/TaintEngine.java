@@ -68,6 +68,8 @@ public final class TaintEngine {
   private final Map<Function, Summary> summaries = new IdentityHashMap<>();
   private final Map<Function, Set<Function>> callers = new IdentityHashMap<>();
   private final Map<String, Finding> findings = new LinkedHashMap<>();
+  /** Request data a method stores on {@code self}, by class and attribute: what the other methods of the class read. */
+  private final Map<PyClass, Map<String, Taint>> attributes = new IdentityHashMap<>();
 
   private TaintEngine(WebModel model, TaintModels models) {
     this.model = model;
@@ -82,13 +84,14 @@ public final class TaintEngine {
     List<Function> functions = new ArrayList<>();
     model.modules().stream().filter(m -> !m.isTest()).forEach(m -> functions.addAll(m.functions()));
     for (int round = 0; round < MAX_ROUNDS; round++) {
+      String attrs = attributeSignature();
       boolean changed = false;
       for (Function f : functions) {
         Summary s = new Analysis(f, false).run();
         Summary old = summaries.put(f, s);
         changed |= old == null ? !s.signature().equals(Summary.EMPTY.signature()) : !old.signature().equals(s.signature());
       }
-      if (!changed) {
+      if (!changed && attrs.equals(attributeSignature())) {
         break;
       }
     }
@@ -100,6 +103,14 @@ public final class TaintEngine {
       out.add(new Finding(f.kind(), f.sinkName(), f.label(), f.source(), f.sink(), f.path(), f.function(), endpoint(f.function())));
     }
     return new TaintResult(List.copyOf(out), Map.copyOf(summaries));
+  }
+
+  /** The stored attributes without the paths: like {@link Summary#signature()}, for the fixpoint. */
+  private String attributeSignature() {
+    Set<String> out = new java.util.TreeSet<>();
+    attributes.forEach((c, as) -> as.forEach((a, t) -> t.flows().forEach((o, f) ->
+      out.add(c.module().path() + c.name() + "." + a + o.label() + o.source() + new java.util.TreeSet<>(f.cleared())))));
+    return out.toString();
   }
 
   /** The endpoint of the function, else of the nearest caller that is one. */
@@ -116,6 +127,12 @@ public final class TaintEngine {
         return es.get(0);
       }
       queue.addAll(callers.getOrDefault(g, Set.of()));
+    }
+    // setup(), dispatch(), get_queryset(): a method the framework calls, of a view class
+    for (Endpoint e : f.owner() == null ? List.<Endpoint>of() : model.endpoints()) {
+      if (e.viewClass() != null && model.hierarchy(e.viewClass()).contains(f.owner())) {
+        return e;
+      }
     }
     return null;
   }
@@ -183,6 +200,16 @@ public final class TaintEngine {
       }
       if (fn.owner() != null) {
         env.requests.add("self.request");
+        if (fn.takesSelf()) {
+          // self.url = request.GET["url"] in another method of the class, a base class or a subclass (a base class's
+          // method runs on the subclass's instances): the value it may hold here
+          List<PyClass> bases = model.hierarchy(fn.owner());
+          attributes.forEach((c, as) -> {
+            if (bases.contains(c) || model.hierarchy(c).contains(fn.owner())) {
+              as.forEach((a, t) -> env.vars.merge("self." + a, t, Taint::union));
+            }
+          });
+        }
       }
       block(fn.body(), env);
       summary.returnSources = returned.filter(Taint.Origin::isSource);
@@ -449,6 +476,7 @@ public final class TaintEngine {
           Taint t = eval(part.subList(aug + 1, part.size()), env);
           if (key != null && !t.isEmpty()) {
             env.vars.merge(key, t.step(step(part.get(0).first(), "added to " + key)), Taint::union);
+            store(key, env);
           }
           continue;
         }
@@ -473,6 +501,7 @@ public final class TaintEngine {
           }
           if (!t.isEmpty()) {
             env.vars.merge(receiver, t.step(step(c.first(), "added to " + receiver)), Taint::union);
+            store(receiver, env);
           }
         }
       }
@@ -495,6 +524,7 @@ public final class TaintEngine {
             env.vars.remove(key);
           } else {
             env.vars.put(key, t.step(step(item.get(0).first(), "assigned to " + key)));
+            store(key, env);
           }
           if (items.size() == 1) {
             String vd = Exprs.dotted(value);
@@ -517,8 +547,20 @@ public final class TaintEngine {
           if (c != null && c.segments().get(c.segments().size() - 1) instanceof Chain.Index) {
             String base = Exprs.head(c);
             env.vars.merge(base, t.step(step(c.first(), "stored in " + base)), Taint::union);
+            store(base, env);
           }
         }
+      }
+    }
+
+    /** {@code self.url = ...} with request data: kept for the other methods of the class (parameters are not, they are this call's). */
+    private void store(String key, Env env) {
+      if (fn.owner() == null || !fn.takesSelf() || !key.startsWith("self.") || key.indexOf('.', 5) >= 0) {
+        return;
+      }
+      Taint t = env.vars.get(key).filter(Taint.Origin::isSource);
+      if (!t.isEmpty()) {
+        attributes.computeIfAbsent(fn.owner(), c -> new HashMap<>()).merge(key.substring(5), t, Taint::union);
       }
     }
 

@@ -71,7 +71,12 @@ above the file (deepest first) and its `src/`, so a Django app beside manage.py 
 - FastAPI: `FastAPI()` and `APIRouter(prefix=..., dependencies=[...])` objects (module level or in a factory; a
   project alias named `...Router` or a project subclass of APIRouter too),
   `@x.get/post/put/patch/delete/options/head/api_route(...)`, `include_router(router, prefix=..., dependencies=[...])`
-  followed up to the app. Auth: a `Depends(...)` whose callable says auth by its name (get_current_user, oauth2_scheme,
+  followed up to the app. An APIRouter is an endpoint only once an `include_router` outside tests adds it to an app,
+  to a router that is, or to a receiver that cannot be followed (`self.app`); not when the receiver is a parameter of
+  a function no code outside tests names (`def init(app): app.include_router(build_router())` called by a test only).
+  The argument is a router name, a project function that builds the router (`build_router()`), or nothing of the
+  project (`fastapi_users.get_auth_router()`); a name that cannot be followed and is no router's (`for r in routers:`)
+  counts every router as included. Auth: a `Depends(...)` whose callable says auth by its name (get_current_user, oauth2_scheme,
   require_admin, current_session...), any `Security(...)`, a `fastapi.security` scheme, an `Annotated[..., Depends(...)]`
   alias, a project dependency that is defined in an auth module, reads a credential cookie or header, or itself
   depends on one of those, or a module-level instance (`_Write = Authenticator(...)`) of an auth-named class or defined
@@ -134,6 +139,14 @@ above the file (deepest first) and its `src/`, so a Django app beside manage.py 
   followed (`self.app.middlewares`), or any auth middleware for a route whose app cannot be followed, counts for every
   aiohttp endpoint. A middleware that skips paths (`if request.path in PUBLIC`) counts like any other. A handler
   defined inside several factories is the one of the factory that registers it.
+
+EndpointWithoutAuth reports an endpoint only when an endpoint of the same framework (Django and DRF together) and
+the same app checks its caller: for FastAPI, Flask and aiohttp the app is the set of modules imports connect, so a
+FastAPI router beside an aiohttp server is not judged against the aiohttp handlers. An auth `@app.middleware("http")`
+makes FastAPI's auth unreadable; an aiohttp `@web.middleware` does not. A POST that creates a user with a password
+hash (path or name about users, accounts, members, register or sign-up; `hash_password`, `make_password`,
+`set_password`, `bcrypt.hashpw`, `pwd_context.hash`, argon2, in the handler or a helper it calls; not an admin path)
+is a sign-up, public like login.
 
 ## The taint engine (package `taint`)
 

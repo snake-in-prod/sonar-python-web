@@ -60,6 +60,11 @@ class PythonWebRulesBatch3Test {
   }
 
   @Test
+  void endpoint_without_auth_judges_each_framework_and_served_routers_only() {
+    RuleVerifier.verify("EndpointWithoutAuthFrameworks", new EndpointWithoutAuth());
+  }
+
+  @Test
   void csrf_exempt_mutation() {
     RuleVerifier.verify("CsrfExemptMutation");
   }

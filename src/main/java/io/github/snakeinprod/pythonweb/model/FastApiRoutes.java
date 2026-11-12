@@ -5,6 +5,7 @@ import io.github.snakeinprod.pythonweb.parse.Chain;
 import io.github.snakeinprod.pythonweb.parse.Chains;
 import io.github.snakeinprod.pythonweb.parse.Node;
 import io.github.snakeinprod.pythonweb.parse.Token;
+import io.github.snakeinprod.pythonweb.parse.TokenKind;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -17,7 +18,7 @@ import java.util.Set;
 /**
  * FastAPI endpoints: {@code @app.get(...)} / {@code @router.post(...)} / {@code @router.api_route(..., methods=[...])}
  * on {@code FastAPI()} and {@code APIRouter(prefix=..., dependencies=[...])} objects, prefixes and dependencies of
- * {@code include_router} calls followed up to the app. Auth: a dependency whose name says so ({@code
+ * {@code include_router} calls followed up to the app; a router only tests include gives no endpoint. Auth: a dependency whose name says so ({@code
  * Depends(get_current_user)}, {@code Security(...)}, an {@code OAuth2PasswordBearer} scheme, an {@code Annotated} alias of
  * one, or a project dependency function that itself depends on one) on the route, a parameter, a router, an include or
  * the app.
@@ -26,8 +27,8 @@ final class FastApiRoutes {
 
   private static final Set<String> VERBS = Set.of("get", "post", "put", "patch", "delete", "options", "head", "trace", "api_route");
 
-  /** A FastAPI app or APIRouter object: module-level or inside a factory function. */
-  record Router(Module module, String var, String prefix, List<Node> deps) {
+  /** A FastAPI app or APIRouter object: module-level or inside a factory function ({@code at}, else null). */
+  record Router(Module module, String var, String prefix, List<Node> deps, boolean app, Function at) {
   }
 
   record Include(Router parent, String prefix, List<Node> deps) {
@@ -36,6 +37,13 @@ final class FastApiRoutes {
   private final WebModel model;
   private final Map<String, Router> routers = new LinkedHashMap<>();
   private final Map<Router, Include> parents = new HashMap<>();
+  /** Every router an include_router outside tests adds to a known router. */
+  private final Map<Router, Set<Router>> includedIn = new HashMap<>();
+  /** Routers an include_router outside tests adds to a receiver that cannot be followed ({@code self.app}). */
+  private final Set<Router> looseIncludes = new HashSet<>();
+  /** Some include_router outside tests adds a router that cannot be followed: every router counts as mounted. */
+  private boolean unknownInclude;
+  private Map<String, Integer> names;
 
   private FastApiRoutes(WebModel model) {
     this.model = model;
@@ -60,7 +68,8 @@ final class FastApiRoutes {
         if (routerFactory(m, Exprs.head(c))) {
           String prefix = Exprs.string(Exprs.arg(call, -1, "prefix"));
           List<Node> deps = Exprs.arg(call, -1, "dependencies");
-          routers.put(m.path() + "#" + var, new Router(m, var, prefix == null ? "" : prefix, deps == null ? List.of() : deps));
+          routers.put(m.path() + "#" + var, new Router(m, var, prefix == null ? "" : prefix, deps == null ? List.of() : deps,
+            isApp(m, Exprs.head(c)), m.functionAt(s.first().line())));
         }
       }
     }
@@ -79,6 +88,14 @@ final class FastApiRoutes {
               List<Node> deps = Exprs.arg(call, -1, "dependencies");
               parents.putIfAbsent(child, new Include(parent, prefix == null ? "" : prefix, deps == null ? List.of() : deps));
             }
+            Set<Router> children = childNodes == null ? Set.of() : children(m, childNodes);
+            if (children == null) {
+              unknownInclude = true;
+            } else if (parent != null) {
+              children.forEach(k -> includedIn.computeIfAbsent(k, x -> new HashSet<>()).add(parent));
+            } else if (reached(m.functionAt(c.line()), head)) {
+              looseIncludes.addAll(children);
+            }
           }
         }
       }
@@ -90,7 +107,7 @@ final class FastApiRoutes {
           if (d.call() != null && VERBS.contains(d.last()) && !d.receiver().isEmpty()
             && d.chain().segments().size() == Exprs.headSize(d.chain()) + 1) {
             Router r = router(m, d.receiver());
-            if (r != null) {
+            if (r != null && mounted(r, new HashSet<>())) {
               out.add(endpoint(f, d, r));
             }
           }
@@ -120,6 +137,80 @@ final class FastApiRoutes {
     PyClass cls = model.cls(m, head);
     return cls != null && model.externalBases(cls).stream()
       .anyMatch(b -> b.startsWith("fastapi.") && (b.endsWith(".FastAPI") || b.endsWith(".APIRouter")));
+  }
+
+  /** A FastAPI app ({@code FastAPI()} or a project subclass), not a router. */
+  private boolean isApp(Module m, String head) {
+    String callee = m.resolve(head);
+    if (callee.equals("fastapi.FastAPI") || callee.endsWith(".FastAPI") || callee.equals("FastAPI")) {
+      return true;
+    }
+    PyClass cls = model.cls(m, head);
+    return cls != null && model.externalBases(cls).stream().anyMatch(b -> b.endsWith(".FastAPI"));
+  }
+
+  /**
+   * The router is served: an app, or added by an include_router outside tests to a router that is, or to a receiver
+   * that cannot be followed. A router only tests include gives no endpoint.
+   */
+  private boolean mounted(Router r, Set<Router> seen) {
+    if (r.app() || unknownInclude || looseIncludes.contains(r)) {
+      return true;
+    }
+    if (!seen.add(r)) {
+      return false;
+    }
+    return includedIn.getOrDefault(r, Set.of()).stream().anyMatch(p -> mounted(p, seen));
+  }
+
+  /**
+   * The routers an include_router argument denotes: a router name, the routers a project function builds
+   * ({@code build_router()}), none for a third-party router ({@code fastapi_users.get_auth_router(...)}); null when
+   * it cannot be followed ({@code for r in routers: app.include_router(r)}) and no router has that name.
+   */
+  private Set<Router> children(Module m, List<Node> arg) {
+    String name = Exprs.dotted(arg);
+    if (name != null) {
+      Router r = router(m, name);
+      if (r != null) {
+        return Set.of(r);
+      }
+      if (model.locate(m, name) == null && !m.resolve(name).equals(name)) {
+        return Set.of();
+      }
+      String last = name.substring(name.lastIndexOf('.') + 1);
+      Set<Router> named = new HashSet<>();
+      routers.values().stream().filter(x -> x.var().equals(last)).forEach(named::add);
+      return named.isEmpty() ? null : named;
+    }
+    Chain c = Exprs.chain(arg);
+    if (c == null || Exprs.firstCall(c) == null) {
+      return null;
+    }
+    Function f = model.function(m, Exprs.head(c));
+    if (f == null) {
+      return Set.of();
+    }
+    Set<Router> built = new HashSet<>();
+    routers.values().stream().filter(x -> x.at() == f).forEach(built::add);
+    return built.isEmpty() ? null : built;
+  }
+
+  /**
+   * An include_router whose receiver cannot be followed runs outside tests: unless the receiver is a parameter of a
+   * function ({@code def init(app): app.include_router(...)}) that no code outside tests names.
+   */
+  private boolean reached(Function at, String head) {
+    String receiver = head.substring(0, head.indexOf('.'));
+    if (at == null || at.param(receiver) == null) {
+      return true;
+    }
+    if (names == null) {
+      names = new HashMap<>();
+      model.modules().stream().filter(x -> !x.isTest()).flatMap(x -> x.file().tokens().stream())
+        .filter(t -> t.kind() == TokenKind.IDENT).forEach(t -> names.merge(t.text(), 1, Integer::sum));
+    }
+    return names.getOrDefault(at.name(), 0) > 1;
   }
 
   /** The router a name denotes in a module: one assigned in that module (anywhere), or one it imports. */

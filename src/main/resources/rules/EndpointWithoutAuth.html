@@ -12,9 +12,12 @@ wrappers in urls.py, <code>LoginRequiredMiddleware</code>; DRF <code>permission_
 check and an auth middleware registered on the handler's aiohttp app or an app it is mounted in (a middleware of one
 sub-app does not cover the parent's routes or a sibling sub-app); a check of the user, a token, a
 key or a signature in the handler or a helper it calls.</p>
-<p>It stays silent for apps that check no caller anywhere, endpoints made open explicitly (<code>AllowAny</code>),
-endpoints that are public by purpose (login, signup, token, password reset, webhooks, callbacks, health), a POST that
-writes nothing and runs no command, and apps whose authentication sits where the analysis does not look (auth middleware).</p>
+<p>It stays silent for apps that check no caller anywhere (each framework of a repository is judged apart: a FastAPI
+router is not compared with aiohttp handlers), endpoints made open explicitly (<code>AllowAny</code>),
+endpoints that are public by purpose (login, signup, token, password reset, webhooks, callbacks, health; a POST that
+creates a user with a hashed password is a sign-up), a POST that
+writes nothing and runs no command, routers only tests mount, and apps whose authentication sits where the analysis
+does not look (auth middleware).</p>
 <h2>Noncompliant code example</h2>
 <pre>
 router = APIRouter(prefix="/items")

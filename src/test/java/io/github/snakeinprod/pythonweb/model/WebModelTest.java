@@ -340,6 +340,13 @@ class WebModelTest {
         @admin.delete("/{id}")
         async def purge(id: int):
             return {}
+        """,
+      "app/main.py", """
+        from fastapi import FastAPI
+        from app.items import endpoints
+        app = FastAPI()
+        app.include_router(endpoints.router)
+        app.include_router(endpoints.admin)
         """);
     assertThat(endpoint(model, "POST", "/items/").auth().evidence()).isEqualTo("Depends(_Write) on parameter subject");
     assertThat(endpoint(model, "DELETE", "/{id}").auth().present()).isFalse();

@@ -25,9 +25,10 @@ import java.util.regex.Pattern;
 
 /**
  * A mutating endpoint (PUT, PATCH, DELETE; POST when it writes or runs a command; a Django view open to any method when it writes) with no check of
- * the caller, in an app where other endpoints do check it (for Flask, FastAPI and aiohttp, the app is the set of modules imports
- * connect, so the separate apps of one repository are judged apart). Silent when the endpoint is explicitly open
- * (AllowAny), looks public by its name (login, signup, webhook...), counts visits (POST .../view), says it is open in a
+ * the caller, in an app of the same framework where other endpoints do check it (for Flask, FastAPI and aiohttp, the app is
+ * the set of modules imports connect, so the separate apps of one repository are judged apart). Silent when the endpoint
+ * is explicitly open (AllowAny), looks public by its name (login, signup, webhook...) or creates a user with a password
+ * hash (sign-up), counts visits (POST .../view), says it is open in a
  * comment just above it, checks something in its body or a helper, takes a dependency that names a user, or when the
  * app authenticates in a way the model cannot follow (auth middleware, unparsed DRF defaults, include_router
  * dependencies that were not resolved).
@@ -60,6 +61,13 @@ public class EndpointWithoutAuth implements PwRule {
   /** A call that starts a process: running a command on the server changes its state. */
   private static final Pattern RUNS = Pattern.compile("os\\.(system|popen|exec\\w*|spawn\\w*)|subprocess\\.(run|call|check_call|check_output|"
     + "Popen|getoutput|getstatusoutput)|asyncio\\.create_subprocess_(exec|shell)");
+
+  /** A path or handler about users or sign-up: POST /v1/user/, create_account, register_member. */
+  private static final Pattern SIGNUP = Pattern.compile("(?i)(?<![a-z])(users?|accounts?|members?|customers?|register|sign_?up)(?![a-z])");
+  private static final Pattern ADMIN = Pattern.compile("(?i)admin|staff|superuser");
+  /** Code that hashes a new password: hash_password, make_password, set_password, bcrypt.hashpw, pwd_context.hash. */
+  private static final Pattern HASHES = Pattern.compile("(?i)hash_?password|password_?hash|make_password|set_password|hashpw|"
+    + "(pwd|password|crypt)_?context\\.hash\\(|argon2|PasswordHasher");
 
   private static final Pattern BY_IP = Pattern.compile("(?i)rate_?limit\\w*_by_ip|ratelimit\\w*\\(.*key=[\"']ip[\"']");
 
@@ -101,8 +109,8 @@ public class EndpointWithoutAuth implements PwRule {
       String where = String.join("|", e.methods()) + " " + e.path();
       String message = where + (more > 0 ? " and " + more + " more endpoint" + (more > 1 ? "s" : "") + " of " + (e.viewClass() != null ? e.viewClass().name() : e.label()) : "")
         + " " + (more > 0 ? "have" : "has") + " no authentication: add " + hint(e.framework()) + ", as other endpoints of this app do.";
-      Endpoint ref = protectedOnes.stream().filter(p -> p.module() == e.module()).findFirst()
-        .orElse(protectedOnes.stream().filter(p -> p.framework() == e.framework()).findFirst().orElse(null));
+      Endpoint ref = protectedOnes.stream().filter(p -> p.module() == e.module() && sameApp(e, p)).findFirst()
+        .orElse(protectedOnes.stream().filter(p -> sameApp(e, p)).findFirst().orElse(null));
       List<Step> secondaries = ref == null ? List.of()
         : List.of(new Step(ref.module(), ref.token(), "this endpoint checks the caller: " + ref.auth().evidence()));
       ctx.report(e.token(), e.token(), message, secondaries);
@@ -115,11 +123,19 @@ public class EndpointWithoutAuth implements PwRule {
    * include() strings, so a Django project counts as one app.
    */
   private boolean sameAppChecks(Endpoint e, List<Endpoint> protectedOnes) {
-    if (e.framework() != Framework.FLASK && e.framework() != Framework.FASTAPI && e.framework() != Framework.AIOHTTP) {
-      return true;
+    return protectedOnes.stream().anyMatch(p -> sameApp(e, p));
+  }
+
+  /** Same framework (Django and DRF together) and, but for Django, modules imports connect. */
+  private boolean sameApp(Endpoint e, Endpoint p) {
+    if (family(e.framework()) != family(p.framework())) {
+      return false;
     }
-    Module app = root(apps, e.module());
-    return protectedOnes.stream().anyMatch(p -> root(apps, p.module()) == app);
+    return family(e.framework()) == Framework.DJANGO || root(apps, e.module()) == root(apps, p.module());
+  }
+
+  private static Framework family(Framework f) {
+    return f == Framework.DRF ? Framework.DJANGO : f;
   }
 
   /** Union of modules over project imports: each module points towards its app's representative. */
@@ -164,7 +180,7 @@ public class EndpointWithoutAuth implements PwRule {
     if (PUBLIC.matcher(e.path()).find() || PUBLIC.matcher(e.label()).find() || COUNTER.matcher(e.path()).find() || openOnPurpose(e)) {
       return false;
     }
-    if (e.function() != null && (PUBLIC.matcher(docstring(e.function())).find() || anonymousByDesign(e.function()))) {
+    if (e.function() != null && (PUBLIC.matcher(docstring(e.function())).find() || anonymousByDesign(e.function()) || signup(model, e))) {
       return false;
     }
     List<Function> code = new ArrayList<>();
@@ -190,6 +206,18 @@ public class EndpointWithoutAuth implements PwRule {
     return true;
   }
 
+  /**
+   * A POST that creates a user with a password hash (sign-up under another name: {@code POST /v1/user/} calling
+   * {@code hash_password}, in its body or a helper it calls); not an admin path.
+   */
+  private static boolean signup(WebModel model, Endpoint e) {
+    if (!e.methods().equals(List.of("POST")) || !SIGNUP.matcher(e.path() + " " + e.label()).find()
+      || ADMIN.matcher(e.path() + " " + e.label()).find()) {
+      return false;
+    }
+    return HASHES.matcher(bodyText(e.function())).find() || calls(model, e.function(), HASHES);
+  }
+
   /** A comment just above the handler says it is open: "# Deliberately ungated: shared with an external vendor". */
   private static boolean openOnPurpose(Endpoint e) {
     Function f = e.function();
@@ -203,11 +231,16 @@ public class EndpointWithoutAuth implements PwRule {
 
   /** A helper the handler calls checks the caller: {@code ensure_owner(request, item)}. */
   private static boolean callsChecker(WebModel model, Function f) {
+    return calls(model, f, CHECK);
+  }
+
+  /** A project function the handler calls has code the pattern matches. */
+  private static boolean calls(WebModel model, Function f, Pattern p) {
     for (PyStatement s : f.body()) {
       for (PyStatement x : s.walk()) {
         for (Chain c : Chains.in(x.group())) {
           Function callee = Exprs.firstCall(c) == null ? null : model.function(f.module(), Exprs.head(c));
-          if (callee != null && callee != f && CHECK.matcher(bodyText(callee)).find()) {
+          if (callee != null && callee != f && p.matcher(bodyText(callee)).find()) {
             return true;
           }
         }
@@ -240,7 +273,7 @@ public class EndpointWithoutAuth implements PwRule {
       }
       for (Function f : m.functions()) {
         for (Decorator d : f.decorators()) {
-          if (d.last().equals("middleware") && CHECK.matcher(bodyText(f)).find()) {
+          if (d.last().equals("middleware") && !d.resolved().startsWith("aiohttp.") && CHECK.matcher(bodyText(f)).find()) {
             out.put(Framework.FASTAPI, true);
           }
         }

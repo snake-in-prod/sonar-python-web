@@ -58,3 +58,30 @@ def relay(host):
     if not seen:
         recent_hosts[host] = 1
     return urllib2.urlopen("http://%s/status" % host).read()  # Noncompliant
+
+
+class Feed:
+    def __init__(self, url, timeout=10):
+        self.url = url
+        self.timeout = timeout
+
+    def fetch(self):
+        return requests.get(self.url, timeout=self.timeout).text  # Noncompliant {{request.args of GET /feed}}
+
+
+class DefaultFeed(Feed):
+    def __init__(self):
+        super().__init__(app.config["FEED_URL"])
+
+
+@app.route("/feed")
+def feed():
+    f = Feed(request.args["url"])
+    return f.fetch()
+
+
+@app.route("/default-feed")
+def default_feed():
+    # the URL comes from the configuration; only the timeout from the caller
+    Feed(app.config["FEED_URL"], timeout=int(request.args["t"])).fetch()
+    return DefaultFeed().fetch()

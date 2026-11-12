@@ -158,14 +158,26 @@ literal start (`"https://api.example/"`, `"/items/"`), or server values before a
 Inter-procedural: each project function gets a `Summary` with `returns()` (parameter index to the flow reaching the
 return value), `returnSources()` (request inputs it returns itself) and `sinks()` (`ParamSink`: parameter, sink kind,
 path to the sink). Calls of module functions, imported functions, `self.method()` and `Class.method()` use the
-callee's summary, and so do methods of a module-level instance (`dao = Dao()`, then `dao.query(sql)`). Request data a method stores on `self` (`self.url = request.GET["url"]`
+callee's summary, and so do methods of a module-level instance (`dao = Dao()`, then `dao.query(sql)`), of a local
+instance (`repo = Repo()`, then `repo.find(x)`) and of one built in the same chain (`Repo().find(x)`); a constructor call
+uses `__init__`'s summary (capitalised class names only). Request data a method stores on `self` (`self.url = request.GET["url"]`
 in `__init__`, `setup` or `dispatch`, also `self.x += ...`, `self.items.append(...)`, `self.d[k] = ...`) is kept per
 class and attribute and seeds `self.url` in every method of that class, its project base classes and its subclasses;
 only request inputs are kept, not the method's parameters, so an attribute assigned from settings or constants stays
 clean. Summaries and these attributes are recomputed over all functions until none changes or 8 rounds (the depth
 bound); a last pass records the findings. A finding read in a method no one calls (`setup`, `dispatch`) takes the
-endpoint of its view class. Calls on objects of unknown type (`Repo().find(x)`) are not followed. Arguments of a constructor (`Client(request.GET["u"])` with
-`self.url = url` in `__init__`) do not reach the attributes.
+endpoint of its view class.
+
+Constructor arguments: what `__init__` stores on `self` from its parameters (`self.url = url`, also through
+`super().__init__(url)` and `Base.__init__(self, url)`; a `@dataclass` or attrs class's fields, bases' first, with attrs
+dropping a leading underscore from the parameter name) is kept per class as attribute to parameter. In a method of that
+class, its bases or subclasses, such an attribute is a pseudo parameter of the summary (index `TaintEngine.ATTR` + an id
+per attribute name), so `self.url` reaching a sink or the return value is recorded like a parameter. At
+`client = Client(request.GET["u"])` the arguments are mapped onto those parameters and give `client.url`; a call
+`client.fetch()` (or `Client(u).fetch()`, or `self.fetch()` inside the class) passes the receiver's attributes as the
+pseudo parameters. Only the arguments' own taint is carried, so `Client(settings.API_URL)` stays clean. An instance
+stored on another object (`self.client = Client(u)`) is followed within that method only; one returned by a factory
+or held in a container is not.
 
 Sanitizers clear a value for some sink kinds (`int` for all, `shlex.quote` for command, `os.path.basename` for path,
 `html.escape` for template...). Guards clear a variable for the rest of the function when a condition checks it:

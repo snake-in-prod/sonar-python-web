@@ -616,6 +616,97 @@ class WebModelTest {
   }
 
   @Test
+  void aiohttp_auth_middleware_guards_its_app_and_sub_apps_only() {
+    WebModel model = TestProjects.model("svc/main.py", """
+      from aiohttp import web
+
+      @web.middleware
+      async def token_auth(request, handler):
+          if request.headers.get("Authorization") != "Bearer x":
+              raise web.HTTPUnauthorized()
+          return await handler(request)
+
+      async def h(request):
+          return web.Response()
+
+      def make_child():
+          child = web.Application()
+          child.router.add_delete("/c", h)
+          return child
+
+      def make_app():
+          root = web.Application()
+          api = web.Application()
+          api.middlewares.append(token_auth)
+          api.router.add_delete("/a", h)
+          api.add_subapp("/child", make_child())
+          other = web.Application()
+          other.router.add_delete("/o", h)
+          root.add_subapp("/api", api)
+          root.add_subapp("/other", other)
+          root.router.add_delete("/r", h)
+          return root
+      """);
+    assertThat(endpoint(model, "DELETE", "/api/a").auth().evidence()).isEqualTo("middleware token_auth");
+    // aiohttp runs a parent app's middlewares for its sub-apps' routes
+    assertThat(endpoint(model, "DELETE", "/api/child/c").auth().evidence()).isEqualTo("middleware token_auth");
+    // not for the parent's own routes, nor for a sibling sub-app
+    assertThat(endpoint(model, "DELETE", "/r").auth().present()).isFalse();
+    assertThat(endpoint(model, "DELETE", "/other/o").auth().present()).isFalse();
+
+    // a middleware on an app that cannot be followed still counts for every endpoint
+    WebModel opaque = TestProjects.model("svc/main.py", """
+      from aiohttp import web
+
+      @web.middleware
+      async def token_auth(request, handler):
+          if request.headers.get("Authorization") != "Bearer x":
+              raise web.HTTPUnauthorized()
+          return await handler(request)
+
+      async def h(request):
+          return web.Response()
+
+      class Server:
+          def start(self):
+              self.app.middlewares.append(token_auth)
+
+      def make_app():
+          root = web.Application()
+          root.router.add_delete("/r", h)
+          return root
+      """);
+    assertThat(endpoint(opaque, "DELETE", "/r").auth().evidence()).isEqualTo("middleware token_auth");
+
+    // two factories each defining their handler: each registration takes its own factory's
+    WebModel twice = TestProjects.model("svc/main.py", """
+      from aiohttp import web
+
+      @web.middleware
+      async def token_auth(request, handler):
+          if request.headers.get("Authorization") != "Bearer x":
+              raise web.HTTPUnauthorized()
+          return await handler(request)
+
+      def plain():
+          async def handler(request):
+              return web.Response()
+          app = web.Application()
+          app.router.add_delete("/x", handler)
+          return app
+
+      def guarded():
+          async def handler(request):
+              return web.Response()
+          app = web.Application(middlewares=[token_auth])
+          app.router.add_delete("/x", handler)
+          return app
+      """);
+    assertThat(twice.endpoints()).extracting(e -> e.function().firstLine() + " " + e.auth().evidence())
+      .containsExactlyInAnyOrder("10 null", "17 middleware token_auth");
+  }
+
+  @Test
   void aiohttp_sub_apps_prefix_their_routes() {
     WebModel model = TestProjects.model("svc/main.py", """
       from aiohttp import web

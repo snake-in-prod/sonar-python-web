@@ -55,6 +55,11 @@ class PythonWebRulesBatch3Test {
   }
 
   @Test
+  void endpoint_without_auth_aiohttp_middleware_guards_only_its_app() {
+    RuleVerifier.verify("EndpointWithoutAuthAioApps", new EndpointWithoutAuth());
+  }
+
+  @Test
   void csrf_exempt_mutation() {
     RuleVerifier.verify("CsrfExemptMutation");
   }

@@ -128,8 +128,12 @@ above the file (deepest first) and its `src/`, so a Django app beside manage.py 
   handler, `authorized_userid` with an `HTTPUnauthorized` or a redirect to a login page, an aiohttp_session login
   check (`get_session` read, then `HTTPUnauthorized` or a redirect to a login page), a user test; the same in a helper
   the handler calls (two calls deep), or a helper that reads a credential and refuses with 401 / 403; else an auth
-  middleware (`web.Application(middlewares=[...])`, `app.middlewares.append(...)`) whose code checks the caller, for
-  every aiohttp endpoint.
+  middleware (`web.Application(middlewares=[...])`, `app.middlewares.append(...)`) whose code checks the caller,
+  registered on the route's app or an app it is mounted in, since aiohttp runs a parent's middlewares for its sub-apps'
+  routes (`AiohttpApps.lineage`); not on a sibling sub-app or an unrelated app. A middleware on an app that cannot be
+  followed (`self.app.middlewares`), or any auth middleware for a route whose app cannot be followed, counts for every
+  aiohttp endpoint. A middleware that skips paths (`if request.path in PUBLIC`) counts like any other. A handler
+  defined inside several factories is the one of the factory that registers it.
 
 ## The taint engine (package `taint`)
 

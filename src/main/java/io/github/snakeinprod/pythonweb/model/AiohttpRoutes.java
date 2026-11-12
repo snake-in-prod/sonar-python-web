@@ -1,6 +1,7 @@
 package io.github.snakeinprod.pythonweb.model;
 
 import io.github.snakeinprod.pythonweb.lang.python.PyStatement;
+import io.github.snakeinprod.pythonweb.model.AiohttpApps.Mount;
 import io.github.snakeinprod.pythonweb.parse.Chain;
 import io.github.snakeinprod.pythonweb.parse.Chains;
 import io.github.snakeinprod.pythonweb.parse.Node;
@@ -14,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -26,7 +28,8 @@ import java.util.stream.Collectors;
  * (in {@code app.add_routes([...])} or anywhere); a class handler (a {@code web.View}) gives one endpoint per verb
  * method. Paths take the prefixes of the sub-app they are added to ({@link AiohttpApps}). Auth: an auth decorator, aiohttp_security calls ({@code check_authorized}, {@code check_permission}, {@code
  * authorized_userid}) or an aiohttp_session login check in the handler or a helper it calls, or an auth middleware
- * registered on an app ({@code web.Application(middlewares=[...])}, {@code app.middlewares.append(...)}).
+ * registered on the route's app or an app it is mounted in ({@code web.Application(middlewares=[...])}, {@code
+ * app.middlewares.append(...)}).
  */
 final class AiohttpRoutes {
 
@@ -43,14 +46,15 @@ final class AiohttpRoutes {
   private final WebModel model;
   /** Route tables: the {@code web.RouteTableDef()} call (see {@link AiohttpApps#key}) to its variable name. */
   private final Map<String, String> tables = new HashMap<>();
-  /** Tables added to an app ({@code app.add_routes(routes)}), with the prefixes of the apps. */
-  private final Map<String, Set<String>> registered = new HashMap<>();
+  /** Tables added to an app ({@code app.add_routes(routes)}), with the apps and their prefixes. */
+  private final Map<String, Set<Mount>> registered = new HashMap<>();
   /** The {@code add_routes} calls outside tests. */
   private final List<AddRoutes> adds = new ArrayList<>();
   private AiohttpApps apps;
-  private String middleware;
+  /** Auth middlewares by the app they are registered on; the key null for an app that cannot be followed. */
+  private final Map<String, String> middlewares = new LinkedHashMap<>();
 
-  private record AddRoutes(Module module, List<Node> arg, Set<String> prefixes) {
+  private record AddRoutes(Module module, List<Node> arg, Set<Mount> mounts) {
   }
 
   private AiohttpRoutes(WebModel model) {
@@ -72,12 +76,16 @@ final class AiohttpRoutes {
           && m.resolve(Exprs.head(c)).matches("aiohttp\\.web(_routedef)?\\.RouteTableDef")) {
           tables.put(AiohttpApps.key(m, c), var.substring(var.lastIndexOf('.') + 1));
         }
+      }
+    }
+    apps = new AiohttpApps(model, model.modules().stream().filter(m -> !m.isTest()).toList());
+    for (Module m : mods) {
+      for (PyStatement s : m.py().walk()) {
         for (Chain ch : Chains.in(s.group())) {
           middlewares(m, ch);
         }
       }
     }
-    apps = new AiohttpApps(model, model.modules().stream().filter(m -> !m.isTest()).toList());
     registrations();
     List<Endpoint> out = new ArrayList<>();
     for (Module m : mods) {
@@ -104,16 +112,16 @@ final class AiohttpRoutes {
           String verb = route ? Exprs.string(method) : kind;
           if (path != null && handler != null && verb != null) {
             Function at = m.functionAt(s.first().line());
-            for (String prefix : web.matches() ? listed(m, at, s) : apps.prefixes(m, at, receiver)) {
-              add(out, m, at, Exprs.dotted(handler), prefix + path, verb.toUpperCase(Locale.ROOT));
+            for (Mount mt : web.matches() ? listed(m, at, s) : apps.mounts(m, at, receiver)) {
+              add(out, m, at, Exprs.dotted(handler), mt.prefix() + path, verb.toUpperCase(Locale.ROOT), mt.app());
             }
           }
         }
       }
       for (Function f : m.functions()) {
         for (Decorator d : f.decorators()) {
-          Set<String> prefixes = registered.getOrDefault(table(m, f.owner(), f.parent(), d), Set.of());
-          String path = prefixes.isEmpty() ? null : path(Exprs.arg(d.call(), 0, "path"));
+          Set<Mount> mounts = registered.getOrDefault(table(m, f.owner(), f.parent(), d), Set.of());
+          String path = mounts.isEmpty() ? null : path(Exprs.arg(d.call(), 0, "path"));
           List<String> methods = List.of();
           if (path != null && (VERBS.contains(d.last()) || d.last().equals("head"))) {
             methods = List.of(d.last().toUpperCase(Locale.ROOT));
@@ -122,18 +130,18 @@ final class AiohttpRoutes {
             path = path(Exprs.arg(d.call(), 1, "path"));
             methods = verb == null || path == null ? List.of() : List.of(verb.equals("*") ? "ANY" : verb.toUpperCase(Locale.ROOT));
           }
-          for (String prefix : methods.isEmpty() ? Set.<String>of() : prefixes) {
-            out.add(endpoint(f, null, prefix + path, methods));
+          for (Mount mt : methods.isEmpty() ? Set.<Mount>of() : mounts) {
+            out.add(endpoint(f, null, mt.prefix() + path, methods, mt.app()));
           }
         }
       }
       for (PyClass k : m.classes()) {
         for (Decorator d : k.decorators()) {
-          Set<String> prefixes = d.last().equals("view")
+          Set<Mount> mounts = d.last().equals("view")
             ? registered.getOrDefault(table(m, null, m.functionAt(k.firstLine()), d), Set.of()) : Set.of();
-          String path = prefixes.isEmpty() ? null : path(Exprs.arg(d.call(), 0, "path"));
-          for (String prefix : path == null ? Set.<String>of() : prefixes) {
-            view(out, k, prefix + path, "VIEW");
+          String path = mounts.isEmpty() ? null : path(Exprs.arg(d.call(), 0, "path"));
+          for (Mount mt : path == null ? Set.<Mount>of() : mounts) {
+            view(out, k, mt.prefix() + path, "VIEW", mt.app());
           }
         }
       }
@@ -158,13 +166,13 @@ final class AiohttpRoutes {
             continue;
           }
           Function at = m.functionAt(c.line());
-          Set<String> prefixes = m.isTest() ? Set.of("") : apps.prefixes(m, at, head.substring(0, head.lastIndexOf('.')));
+          Set<Mount> mounts = m.isTest() ? Set.of(Mount.UNKNOWN) : apps.mounts(m, at, head.substring(0, head.lastIndexOf('.')));
           if (!m.isTest()) {
-            adds.add(new AddRoutes(m, arg, prefixes));
+            adds.add(new AddRoutes(m, arg, mounts));
           }
           for (String t : tablesIn(m, at, arg)) {
             if (!m.isTest() || !registered.containsKey(t)) {
-              registered.computeIfAbsent(t, k -> new LinkedHashSet<>()).addAll(prefixes);
+              registered.computeIfAbsent(t, k -> new LinkedHashSet<>()).addAll(mounts);
             }
           }
         }
@@ -195,14 +203,14 @@ final class AiohttpRoutes {
   }
 
   /**
-   * The prefixes of the app a {@code web.get(...)} of statement {@code s} goes to: the {@code add_routes([...])} it is
+   * The apps a {@code web.get(...)} of statement {@code s} goes to: the {@code add_routes([...])} it is
    * in, or the one that adds the list it is assigned or appended to ({@code routes = [...]}, {@code routes.append(...)}).
    */
-  private Set<String> listed(Module m, Function at, PyStatement s) {
+  private Set<Mount> listed(Module m, Function at, PyStatement s) {
     for (Chain c : Chains.in(s.group())) {
       String head = Exprs.head(c);
       if (Exprs.firstCall(c) != null && head.endsWith(".add_routes")) {
-        return apps.prefixes(m, at, head.substring(0, head.lastIndexOf('.')));
+        return apps.mounts(m, at, head.substring(0, head.lastIndexOf('.')));
       }
     }
     List<List<Node>> parts = Exprs.assignment(s.nodes());
@@ -213,15 +221,15 @@ final class AiohttpRoutes {
     } else if (var == null && s.nodes().size() > 1 && Nodes.isLeaf(s.nodes().get(1), "+=")) {
       var = Exprs.dotted(s.nodes().subList(0, 1));
     }
-    Set<String> out = new LinkedHashSet<>();
+    Set<Mount> out = new LinkedHashSet<>();
     for (AddRoutes a : var == null ? List.<AddRoutes>of() : adds) {
       String name = Exprs.dotted(a.arg());
       WebModel.Ref r = name == null ? null : a.module() == m ? new WebModel.Ref(m, name) : model.locate(a.module(), name);
       if (r != null && r.module() == m && r.name().equals(var)) {
-        out.addAll(a.prefixes());
+        out.addAll(a.mounts());
       }
     }
-    return out.isEmpty() ? Set.of("") : out;
+    return out.isEmpty() ? Set.of(Mount.UNKNOWN) : out;
   }
 
   /** One endpoint per handler and path: {@code add_get("/", index)} and {@code add_post("/", index)} give GET|POST /. */
@@ -256,7 +264,7 @@ final class AiohttpRoutes {
   }
 
   /** The endpoints of one registered handler: a function, a method ({@code self.handle_post}) or a view class. */
-  private void add(List<Endpoint> out, Module m, Function at, String name, String path, String verb) {
+  private void add(List<Endpoint> out, Module m, Function at, String name, String path, String verb, String app) {
     if (name == null) {
       return;
     }
@@ -267,51 +275,56 @@ final class AiohttpRoutes {
       }
       Function f = owner.owner() == null ? null : model.method(owner.owner(), name.substring(5));
       if (f != null) {
-        out.add(endpoint(f, null, path, List.of(verb)));
+        out.add(endpoint(f, null, path, List.of(verb), app));
       }
       return;
     }
     PyClass k = model.cls(m, name);
     if (k != null) {
-      view(out, k, path, verb);
+      view(out, k, path, verb, app);
       return;
     }
     Function f = model.function(m, name);
     if (f == null && !name.contains(".")) {
-      // a handler defined inside the factory that registers it
-      f = m.functions().stream().filter(x -> x.name().equals(name) && x.owner() == null).findFirst().orElse(null);
+      // a handler defined inside the factory that registers it (that factory's own first, when several define one)
+      f = m.functions().stream().filter(x -> x.name().equals(name) && x.owner() == null)
+        .min((a, b) -> Boolean.compare(a.parent() != at, b.parent() != at)).orElse(null);
     }
     if (f != null) {
-      out.add(endpoint(f, null, path, List.of(verb.equals("*") || verb.equals("VIEW") ? "ANY" : verb)));
+      out.add(endpoint(f, null, path, List.of(verb.equals("*") || verb.equals("VIEW") ? "ANY" : verb), app));
     }
   }
 
   /** A class-based view: one endpoint per verb method it (or a project base) defines, all of them for "*" or a view. */
-  private void view(List<Endpoint> out, PyClass k, String path, String verb) {
+  private void view(List<Endpoint> out, PyClass k, String path, String verb, String app) {
     for (String v : VERBS) {
       Function f = model.method(k, v);
       if (f != null && (verb.equals("*") || verb.equals("VIEW") || verb.equalsIgnoreCase(v))) {
-        out.add(endpoint(f, k, path, List.of(v.toUpperCase(Locale.ROOT))));
+        out.add(endpoint(f, k, path, List.of(v.toUpperCase(Locale.ROOT)), app));
       }
     }
   }
 
   /**
    * The middlewares registered on an app: {@code web.Application(middlewares=[...])}, {@code
-   * app.middlewares.append(m)} / {@code extend([...])}. The first one whose code checks the caller is the evidence.
+   * app.middlewares.append(m)} / {@code extend([...])}. Per app, the first one whose code checks the caller is the
+   * evidence; one on an app that cannot be followed ({@code self.app.middlewares}) is kept under null.
    */
   private void middlewares(Module m, Chain c) {
     Chain.Call call = Exprs.firstCall(c);
     String head = Exprs.head(c);
-    if (call == null || middleware != null) {
+    if (call == null) {
       return;
     }
     List<Node> list = null;
+    Set<String> on = Set.of();
     if (m.resolve(head).equals("aiohttp.web.Application")) {
       list = Exprs.kwargs(call).get("middlewares");
+      on = Set.of(AiohttpApps.key(m, c));
     } else if (head.endsWith(".middlewares.append") || head.endsWith(".middlewares.extend") || head.endsWith(".middlewares.insert")) {
       List<List<Node>> pos = Exprs.positional(call);
       list = pos.isEmpty() ? null : pos.get(pos.size() - 1);
+      on = apps.of(m, m.functionAt(c.line()), head.substring(0, head.lastIndexOf(".middlewares.")));
     }
     if (list == null) {
       return;
@@ -321,10 +334,26 @@ final class AiohttpRoutes {
       String name = ch == null ? null : Exprs.head(ch);
       Function f = name == null ? null : model.function(m, name);
       if (f != null && (SECURITY.matcher(AuthHints.bodyText(f)).find() || AuthHints.checkingDecorator(f))) {
-        middleware = "middleware " + name;
+        if (on.isEmpty()) {
+          middlewares.putIfAbsent(null, "middleware " + name);
+        }
+        on.forEach(app -> middlewares.putIfAbsent(app, "middleware " + name));
         return;
       }
     }
+  }
+
+  /**
+   * The auth middleware that runs for a route of {@code app}: one registered on it or on an app it is mounted in
+   * (aiohttp runs a parent's middlewares for its sub-apps' routes), or on an app that cannot be followed. For a route
+   * whose app cannot be followed, any auth middleware.
+   */
+  private String middleware(String app) {
+    if (middlewares.containsKey(null) || app == null) {
+      return middlewares.isEmpty() ? null : middlewares.values().iterator().next();
+    }
+    // ponytail: a sub-app mounted in two parents counts as guarded when either parent is; split per prefix if that matters
+    return apps.lineage(app).stream().map(middlewares::get).filter(Objects::nonNull).findFirst().orElse(null);
   }
 
   /** A path literal, or an f-string's literal parts ({@code f"{base}/api/rooms/{{name}}"} gives "/api/rooms/{name}"). */
@@ -354,7 +383,7 @@ final class AiohttpRoutes {
     return out.isEmpty() ? "/" : out;
   }
 
-  private Endpoint endpoint(Function f, PyClass cls, String path, List<String> methods) {
+  private Endpoint endpoint(Function f, PyClass cls, String path, List<String> methods, String app) {
     String auth = null;
     for (Decorator d : f.decorators()) {
       if (auth == null && (AuthHints.DECORATOR.matcher(d.name()).find() || AuthHints.checkingDecorator(model, f.module(), d))) {
@@ -368,9 +397,8 @@ final class AiohttpRoutes {
       Function h = checkingHelper(f, 2);
       auth = h == null ? null : h.name() + "() checks the caller";
     }
-    if (auth == null && middleware != null) {
-      // ponytail: an auth middleware counts for every aiohttp endpoint; tie it to its app when repositories mix apps
-      auth = middleware;
+    if (auth == null) {
+      auth = middleware(app);
     }
     return new Endpoint(Framework.AIOHTTP, path.isEmpty() ? "/" : path, methods, f.module(), f, cls, f.token(), f.label(),
       auth == null ? Endpoint.Auth.NONE : Endpoint.Auth.by(auth), f.isAsync(), AuthHints.writes(f));

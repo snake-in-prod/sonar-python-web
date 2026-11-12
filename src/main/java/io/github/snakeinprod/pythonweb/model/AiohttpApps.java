@@ -63,17 +63,33 @@ final class AiohttpApps {
     return m.path() + ":" + made.first().line() + ":" + made.first().column();
   }
 
-  /** The URL prefixes of the app a receiver denotes ({@code app}, {@code app.router}); [""] when it is a root or unknown. */
-  Set<String> prefixes(Module m, Function scope, String receiver) {
-    Set<String> out = new LinkedHashSet<>();
-    for (String k : of(m, scope, receiver)) {
-      out.addAll(prefixes(k));
-    }
-    return out.isEmpty() ? Set.of("") : out;
+  /** An app (null: unknown) and one URL prefix it is mounted at ("" for a root). */
+  record Mount(String app, String prefix) {
+    static final Mount UNKNOWN = new Mount(null, "");
   }
 
-  Set<String> prefixes(String app) {
-    return prefixes(app, 0);
+  /** The apps a receiver denotes ({@code app}, {@code app.router}) with their prefixes; {@link Mount#UNKNOWN} when none. */
+  Set<Mount> mounts(Module m, Function scope, String receiver) {
+    Set<Mount> out = new LinkedHashSet<>();
+    for (String k : of(m, scope, receiver)) {
+      for (String p : prefixes(k, 0)) {
+        out.add(new Mount(k, p));
+      }
+    }
+    return out.isEmpty() ? Set.of(Mount.UNKNOWN) : out;
+  }
+
+  /** The app and every app it is mounted in, up through nested sub-apps: whose middlewares run for its routes. */
+  Set<String> lineage(String app) {
+    Set<String> out = new LinkedHashSet<>();
+    List<String> todo = new ArrayList<>(List.of(app));
+    while (!todo.isEmpty()) {
+      String a = todo.remove(todo.size() - 1);
+      if (out.add(a)) {
+        parents.getOrDefault(a, List.of()).forEach(e -> todo.add(e[0]));
+      }
+    }
+    return out;
   }
 
   private Set<String> prefixes(String app, int depth) {

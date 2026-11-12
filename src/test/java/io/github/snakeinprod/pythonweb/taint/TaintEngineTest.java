@@ -104,9 +104,9 @@ class TaintEngineTest {
           def find(self, name):
               connection.cursor().execute("SELECT 1 WHERE n = '" + name + "'")
       """);
-    // a: build() returns its parameter formatted, run() passes it to text(); b: Repo().find is not followed (no types)
-    assertThat(found).hasSize(1);
-    Finding f = found.get(0);
+    // a: build() returns its parameter formatted, run() passes it to text(); b: Repo().find(clean) builds the query
+    assertThat(found).extracting(Finding::sinkName).containsExactlyInAnyOrder("text", "execute");
+    Finding f = found.stream().filter(x -> x.sinkName().equals("text")).findFirst().orElseThrow();
     assertThat(f.kind()).isEqualTo("sql");
     assertThat(f.sinkName()).isEqualTo("text");
     assertThat(f.sink().module().path()).isEqualTo("app/queries.py");
@@ -472,5 +472,112 @@ class TaintEngineTest {
       "request.cookies", "request.text");
     assertThat(found).filteredOn(f -> f.label().equals("request.text")).singleElement()
       .satisfies(f -> assertThat(f.where()).isEqualTo("POST /jobs"));
+  }
+
+  @Test
+  void constructor_arguments_stored_on_self_reach_sinks_in_other_methods() {
+    List<Finding> found = findings("app.py", """
+      import os
+      import subprocess
+      from dataclasses import dataclass
+      import requests
+      from flask import Flask, request
+      from app import config
+
+      app = Flask(__name__)
+
+      class Client:
+          def __init__(self, url, timeout=5):
+              self.url = url
+              self.timeout = timeout
+
+          def fetch(self):
+              return requests.get(self.url, timeout=self.timeout)
+
+          def head(self):
+              return self.fetch()
+
+      class Proxy(Client):
+          def __init__(self, target):
+              super().__init__(target)
+
+      @dataclass
+      class Job:
+          name: str
+          cmd: str
+
+          def run(self):
+              subprocess.call(self.cmd, shell=True)
+
+          def log(self):
+              open(self.name)
+
+      @app.route("/fetch")
+      def fetch():
+          c = Client(request.args["u"])
+          return c.head()
+
+      @app.route("/svc")
+      def svc():
+          return Client(url=request.args["u"]).fetch()
+
+      @app.route("/proxy")
+      def proxy():
+          p = Proxy(request.args["u"])
+          return p.fetch()
+
+      @app.route("/job")
+      def job():
+          Job("nightly", request.form["cmd"]).run()
+          j = Job("nightly", request.form["cmd"])
+          j.log()
+
+      @app.route("/clean")
+      def clean():
+          Client(config.API_URL, request.args["t"]).fetch()
+      """);
+    assertThat(found).extracting(f -> f.kind() + " " + f.endpoint().path()).containsExactlyInAnyOrder(
+      "ssrf /fetch", "ssrf /svc", "ssrf /proxy", "command /job");
+    Finding f = found.stream().filter(x -> x.endpoint().path().equals("/fetch")).findFirst().orElseThrow();
+    assertThat(f.sink().token().line()).isEqualTo(16);
+    assertThat(messages(f)).containsExactly("request.args read here", "passed to Client()", "assigned to self.url",
+      "assigned to c", "passed to Client.head()", "passed to Client.fetch()", "reaches requests.get()");
+  }
+
+  @Test
+  void constructor_arguments_reach_sinks_in_init_and_returned_values() {
+    List<Finding> found = findings("app.py", """
+      import os
+      from flask import Flask, request
+
+      app = Flask(__name__)
+
+      class Store:
+          def __init__(self, root, name):
+              self.root = root
+              self.path = os.path.join(root, name)
+              os.remove(self.root)
+
+          def location(self):
+              return self.path
+
+      @app.route("/store")
+      def store():
+          s = Store("/srv/data", request.args["name"])
+          open(s.location())
+          return open(s.path).read()
+
+      @app.route("/mk")
+      def mk():
+          Store(request.args["root"], "x")
+
+      @app.route("/fixed")
+      def fixed():
+          s = Store("/srv/data", "x")
+          s.name = request.args["name"]
+          return open(s.location())
+      """);
+    assertThat(found).extracting(f -> f.sink().token().line() + " " + f.endpoint().path()).containsExactlyInAnyOrder(
+      "18 /store", "19 /store", "10 /mk");
   }
 }

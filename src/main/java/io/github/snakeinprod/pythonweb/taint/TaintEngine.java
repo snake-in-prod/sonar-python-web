@@ -70,6 +70,23 @@ public final class TaintEngine {
   private final Map<String, Finding> findings = new LinkedHashMap<>();
   /** Request data a method stores on {@code self}, by class and attribute: what the other methods of the class read. */
   private final Map<PyClass, Map<String, Taint>> attributes = new IdentityHashMap<>();
+  /**
+   * What {@code __init__} stores on {@code self} from its parameters, by class and attribute: parameter origins (indexes
+   * count self). Dataclass and attrs classes get one from their fields.
+   */
+  private final Map<PyClass, Map<String, Taint>> ctorAttributes = new IdentityHashMap<>();
+  /** The generated {@code __init__}'s parameter names (self excluded) of a dataclass or attrs class. */
+  private final Map<PyClass, List<String>> fieldParams = new IdentityHashMap<>();
+  /** Attribute names to ids: {@code self.url} in a method is the pseudo parameter {@code ATTR + id} of its summary. */
+  private final Map<String, Integer> attrIds = new HashMap<>();
+  private final Map<PyClass, List<PyClass>> subclasses = new IdentityHashMap<>();
+  private final Map<PyClass, Set<PyClass>> related = new IdentityHashMap<>();
+  private final Map<Module, Map<String, java.util.Optional<PyClass>>> classes = new IdentityHashMap<>();
+  /** Parameter indexes from here on are attributes of the receiver, not arguments. */
+  static final int ATTR = 10_000;
+  private static final Set<String> DATACLASSES = Set.of("dataclasses.dataclass", "pydantic.dataclasses.dataclass", "attr.s",
+    "attr.attrs", "attr.define", "attr.frozen", "attr.mutable", "attr.dataclass", "attrs.define", "attrs.frozen", "attrs.mutable");
+  private static final Pattern ATTRS_FIELD = Pattern.compile("(attr\\.ib|attr\\.attrib|attrib|attrs\\.field|attr\\.field|field)\\(.*");
 
   private TaintEngine(WebModel model, TaintModels models) {
     this.model = model;
@@ -83,6 +100,16 @@ public final class TaintEngine {
   private TaintResult run() {
     List<Function> functions = new ArrayList<>();
     model.modules().stream().filter(m -> !m.isTest()).forEach(m -> functions.addAll(m.functions()));
+    for (Module m : model.modules()) {
+      for (PyClass c : m.isTest() ? List.<PyClass>of() : m.classes()) {
+        for (PyClass b : model.hierarchy(c)) {
+          if (b != c) {
+            subclasses.computeIfAbsent(b, x -> new ArrayList<>()).add(c);
+          }
+        }
+        fields(c);
+      }
+    }
     for (int round = 0; round < MAX_ROUNDS; round++) {
       String attrs = attributeSignature();
       boolean changed = false;
@@ -110,7 +137,66 @@ public final class TaintEngine {
     Set<String> out = new java.util.TreeSet<>();
     attributes.forEach((c, as) -> as.forEach((a, t) -> t.flows().forEach((o, f) ->
       out.add(c.module().path() + c.name() + "." + a + o.label() + o.source() + new java.util.TreeSet<>(f.cleared())))));
+    ctorAttributes.forEach((c, as) -> as.forEach((a, t) -> t.flows().forEach((o, f) ->
+      out.add("i" + c.module().path() + c.name() + "." + a + o.param() + new java.util.TreeSet<>(f.cleared())))));
     return out.toString();
+  }
+
+  /** The class, its project base classes and its subclasses: whose methods may run on the same instance. */
+  private Set<PyClass> related(PyClass c) {
+    return related.computeIfAbsent(c, k -> {
+      Set<PyClass> out = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+      out.addAll(model.hierarchy(k));
+      out.addAll(subclasses.getOrDefault(k, List.of()));
+      return out;
+    });
+  }
+
+  private int attrId(String attr) {
+    return attrIds.computeIfAbsent(attr, a -> attrIds.size());
+  }
+
+  /**
+   * A {@code @dataclass} or attrs class without its own {@code __init__}: its fields (annotated class attributes,
+   * {@code attr.ib()}), project base classes' first, are the generated {@code __init__}'s parameters and attributes.
+   */
+  private void fields(PyClass c) {
+    if (c.method("__init__") != null || c.decorators().stream().noneMatch(d -> DATACLASSES.contains(d.resolved()))) {
+      return;
+    }
+    List<String> attrs = new ArrayList<>();
+    List<String> params = new ArrayList<>();
+    List<PyClass> line = new ArrayList<>(model.hierarchy(c));
+    java.util.Collections.reverse(line);
+    for (PyClass k : line) {
+      boolean data = k.decorators().stream().anyMatch(d -> DATACLASSES.contains(d.resolved()));
+      for (PyStatement s : data ? k.statement().body() : List.<PyStatement>of()) {
+        List<Node> n = s.nodes();
+        Token name = n.size() > 2 ? Nodes.leaf(n.get(0)) : null;
+        Token op = n.size() > 2 ? Nodes.leaf(n.get(1)) : null;
+        if (!s.body().isEmpty() || name == null || name.kind() != TokenKind.IDENT || op == null || name.text().equals("_")
+          || attrs.contains(name.text())) {
+          continue;
+        }
+        String value = Exprs.text(n.subList(2, n.size()));
+        boolean field = op.is(":") && !value.startsWith("ClassVar") && !value.startsWith("typing.ClassVar")
+          && !value.startsWith("KW_ONLY") || op.is("=") && ATTRS_FIELD.matcher(value).matches();
+        if (field && !value.replace(" ", "").contains("init=False")) {
+          attrs.add(name.text());
+          // attrs drops the leading underscore of a private attribute's parameter
+          params.add(k.decorators().stream().anyMatch(d -> d.resolved().startsWith("attr")) ? name.text().replaceFirst("^_+", "") : name.text());
+        }
+      }
+    }
+    Map<String, Taint> out = new HashMap<>();
+    for (int i = 0; i < attrs.size(); i++) {
+      attrId(attrs.get(i));
+      out.put(attrs.get(i), Taint.param(i + 1, params.get(i)));
+    }
+    if (!out.isEmpty()) {
+      ctorAttributes.put(c, out);
+      fieldParams.put(c, params);
+    }
   }
 
   /** The endpoint of the function, else of the nearest caller that is one. */
@@ -142,12 +228,15 @@ public final class TaintEngine {
     final Map<String, Taint> vars = new HashMap<>();
     final Map<String, String> types = new HashMap<>();
     final Set<String> requests = new HashSet<>();
+    /** Variables holding an instance of a project class built here: {@code client = Client(url)}. */
+    final Map<String, PyClass> classes = new HashMap<>();
 
     Env copy() {
       Env e = new Env();
       e.vars.putAll(vars);
       e.types.putAll(types);
       e.requests.addAll(requests);
+      e.classes.putAll(classes);
       return e;
     }
 
@@ -155,12 +244,14 @@ public final class TaintEngine {
       o.vars.forEach((k, v) -> vars.merge(k, v, Taint::union));
       types.putAll(o.types);
       requests.addAll(o.requests);
+      classes.putAll(o.classes);
     }
 
     void set(List<Env> all) {
       vars.clear();
       types.clear();
       requests.clear();
+      classes.clear();
       all.forEach(this::add);
     }
   }
@@ -205,12 +296,13 @@ public final class TaintEngine {
         if (fn.takesSelf()) {
           // self.url = request.GET["url"] in another method of the class, a base class or a subclass (a base class's
           // method runs on the subclass's instances): the value it may hold here
-          List<PyClass> bases = model.hierarchy(fn.owner());
-          attributes.forEach((c, as) -> {
-            if (bases.contains(c) || model.hierarchy(c).contains(fn.owner())) {
-              as.forEach((a, t) -> env.vars.merge("self." + a, t, Taint::union));
+          // self.url = url in __init__: the attribute is a pseudo parameter, given by the caller's instance
+          for (PyClass c : related(fn.owner())) {
+            attributes.getOrDefault(c, Map.of()).forEach((a, t) -> env.vars.merge("self." + a, t, Taint::union));
+            for (String a : ctorAttributes.getOrDefault(c, Map.of()).keySet()) {
+              env.vars.merge("self." + a, Taint.param(ATTR + attrId(a), "self." + a), Taint::union);
             }
-          });
+          }
         }
       }
       block(fn.body(), env);
@@ -497,6 +589,11 @@ public final class TaintEngine {
           continue;
         }
         Chain c = Exprs.chain(kw.equals("await") ? rest : part);
+        if (c != null && c.endsWithCall() && c.lastName().equals("__init__") && fn.name().equals("__init__") && fn.takesSelf()
+          && fn.owner() != null) {
+          superInit(c, env);
+          continue;
+        }
         int k = c == null ? 0 : Exprs.headSize(c);
         if (c != null && k >= 2 && c.segments().size() == k + 1 && c.endsWithCall() && models.mutators.contains(c.lastName())) {
           String receiver = Exprs.head(c);
@@ -527,6 +624,7 @@ public final class TaintEngine {
         String key = Exprs.dotted(item);
         if (key != null) {
           env.vars.keySet().removeIf(k -> k.startsWith(key + "."));
+          env.classes.remove(key);
           if (t.isEmpty()) {
             env.vars.remove(key);
           } else {
@@ -548,6 +646,13 @@ public final class TaintEngine {
             } else {
               env.requests.remove(key);
             }
+            // client = Client(request.GET["url"]): the attributes its __init__ stores from those arguments
+            PyClass cls = type == null ? null : projectClass(Exprs.head(vc));
+            if (cls != null) {
+              env.classes.put(key, cls);
+              Step at = step(item.get(0).first(), "assigned to " + key);
+              constructed(cls, 1, vc.last(), call.args(), env).forEach((a, v) -> env.vars.put(key + "." + a, v.step(at)));
+            }
           }
         } else if (!t.isEmpty()) {
           Chain c = Exprs.chain(item);
@@ -560,7 +665,10 @@ public final class TaintEngine {
       }
     }
 
-    /** {@code self.url = ...} with request data: kept for the other methods of the class (parameters are not, they are this call's). */
+    /**
+     * {@code self.url = ...} with request data: kept for the other methods of the class (parameters are not, they are
+     * this call's); in {@code __init__}, the parameters it stores are kept apart, for the callers building instances.
+     */
     private void store(String key, Env env) {
       if (fn.owner() == null || !fn.takesSelf() || !key.startsWith("self.") || key.indexOf('.', 5) >= 0) {
         return;
@@ -569,6 +677,91 @@ public final class TaintEngine {
       if (!t.isEmpty()) {
         attributes.computeIfAbsent(fn.owner(), c -> new HashMap<>()).merge(key.substring(5), t, Taint::union);
       }
+      Taint p = fn.name().equals("__init__") ? env.vars.get(key).filter(o -> !o.isSource() && o.param() < ATTR) : Taint.EMPTY;
+      if (!p.isEmpty()) {
+        attrId(key.substring(5));
+        ctorAttributes.computeIfAbsent(fn.owner(), c -> new HashMap<>()).merge(key.substring(5), p, Taint::union);
+      }
+    }
+
+    /** {@code super().__init__(url)} or {@code Base.__init__(self, url)} in {@code __init__}: what the base stores, stored here. */
+    private void superInit(Chain c, Env env) {
+      List<Chain.Segment> segs = c.segments();
+      Chain.Call args = (Chain.Call) segs.get(segs.size() - 1);
+      PyClass base;
+      int offset;
+      if (c.firstName().equals("super") && segs.size() == 4) {
+        List<PyClass> h = model.hierarchy(fn.owner());
+        base = h.size() > 1 ? h.get(1) : null;
+        offset = 1;
+      } else {
+        base = Exprs.headSize(c) + 1 == segs.size() && segs.size() > 2 ? model.cls(m, Exprs.head(c).replaceFirst("\\.__init__$", "")) : null;
+        offset = 0;
+      }
+      if (base == null) {
+        return;
+      }
+      constructed(base, offset, c.last(), args.args(), env).forEach((a, v) -> {
+        env.vars.put("self." + a, v);
+        store("self." + a, env);
+      });
+    }
+
+    /**
+     * The attributes an instance of the class gets from its constructor's arguments ({@code Client(url)} with
+     * {@code self.url = url} in {@code __init__}): those holding tainted values. {@code offset} is the parameter index of
+     * the first positional argument (1, or 0 for {@code Base.__init__(self, x)}).
+     */
+    private Map<String, Taint> constructed(PyClass cls, int offset, Token at, Node.Group callArgs, Env env) {
+      List<String> fields = fieldParams.get(cls);
+      Function init = fields != null ? null : model.method(cls, "__init__");
+      Map<String, Taint> attrs = ctorAttributes.get(fields != null ? cls : init == null ? null : init.owner());
+      if (attrs == null) {
+        return Map.of();
+      }
+      Map<Integer, Taint> in = fields != null ? fieldArgs(fields, offset, callArgs, env) : mapArgs(init, offset, callArgs, env);
+      if (in.isEmpty()) {
+        return Map.of();
+      }
+      List<Step> passed = List.of(step(at, "passed to " + cls.name() + "()"));
+      Map<String, Taint> out = new HashMap<>();
+      attrs.forEach((a, t) -> t.flows().forEach((o, f) -> {
+        Taint v = in.get(o.param());
+        if (v != null) {
+          out.merge(a, v.then(Taint.append(passed, f.path()), f.cleared()), Taint::union);
+        }
+      }));
+      return out;
+    }
+
+    /** Arguments of a dataclass's generated {@code __init__}, by parameter index (self is 0). */
+    private Map<Integer, Taint> fieldArgs(List<String> fields, int offset, Node.Group callArgs, Env env) {
+      Map<Integer, Taint> out = new HashMap<>();
+      int pos = offset;
+      for (List<Node> item : callArgs.items()) {
+        String kw = Exprs.keyword(item);
+        if (kw == null && (Nodes.isLeaf(item.get(0), "*") || Nodes.isLeaf(item.get(0), "**"))) {
+          continue;
+        }
+        int index = kw != null ? fields.indexOf(kw) + 1 : pos++;
+        Taint t = index >= 1 && index <= fields.size() ? item(kw != null ? item.subList(2, item.size()) : item, env) : Taint.EMPTY;
+        if (!t.isEmpty()) {
+          out.merge(index, t, Taint::union);
+        }
+      }
+      return out;
+    }
+
+    /** {@code self.url} pseudo parameters from the attributes of an instance. */
+    private Map<Integer, Taint> pseudo(Map<String, Taint> attrs) {
+      Map<Integer, Taint> out = new HashMap<>();
+      attrs.forEach((a, t) -> {
+        Integer id = attrIds.get(a);
+        if (id != null) {
+          out.put(ATTR + id, t);
+        }
+      });
+      return out;
     }
 
     // ---- expressions
@@ -866,10 +1059,28 @@ public final class TaintEngine {
           return rest(v, segs, j);
         }
       }
+      if (k > 0 && k + 2 < segs.size() && segs.get(k) instanceof Chain.Call ctor && segs.get(k + 1) instanceof Chain.Name meth
+        && segs.get(k + 2) instanceof Chain.Call mc) {
+        // Client(url).fetch(): the method's summary, with the attributes the constructor stored
+        PyClass cls = projectClass(join(names, k));
+        Function target = cls == null ? null : model.method(cls, meth.token().text());
+        if (target != null) {
+          Summary s = summaries.getOrDefault(target, Summary.EMPTY);
+          Map<Integer, Taint> args = s.returns.isEmpty() ? Map.of() : chained(cls, names.get(k - 1), ctor, target, mc, env);
+          return rest(returned(target, s, args, meth.token()), segs, k + 3);
+        }
+      }
       if (k > 0 && k < segs.size() && segs.get(k) instanceof Chain.Call call) {
         return rest(call(join(names, k), names.get(k - 1), call.args(), env), segs, k + 1);
       }
       return Taint.EMPTY;
+    }
+
+    /** The arguments of {@code Client(url).fetch(x)}: fetch's own, then the attributes the constructor stored. */
+    private Map<Integer, Taint> chained(PyClass cls, Token name, Chain.Call ctor, Function target, Chain.Call call, Env env) {
+      Map<Integer, Taint> args = mapArgs(target, target.takesSelf() ? 1 : 0, call.args(), env);
+      args.putAll(pseudo(constructed(cls, 1, name, ctor.args(), env)));
+      return args;
     }
 
     /** What follows a tainted value in a chain: attribute and index reads and method calls keep it, clean methods drop it. */
@@ -895,29 +1106,10 @@ public final class TaintEngine {
 
     /** The value of a call: a project function's summary, a sanitizer, a propagator, else clean. */
     private Taint call(String head, Token name, Node.Group callArgs, Env env) {
-      Function target = resolve(head);
+      Function target = resolve(head, env);
       if (target != null) {
         Summary s = summaries.getOrDefault(target, Summary.EMPTY);
-        Step in = step(name, "passed to " + target.label() + "()");
-        Step back = step(name, "returned by " + target.label() + "()");
-        Taint out = s.returnSources.then(List.of(back), Set.of());
-        // clean_path(p), safe_filename(n): a project helper named for making a path safe
-        boolean pathCleaner = PATH_CLEANER.matcher(target.name()).find();
-        if (!s.returns.isEmpty()) {
-          Map<Integer, Taint> args = mapArgs(target, head, callArgs, env);
-          for (Map.Entry<Integer, Taint.Flow> r : s.returns.entrySet()) {
-            Taint a = args.get(r.getKey());
-            if (a != null) {
-              Set<String> cleared = r.getValue().cleared();
-              if (pathCleaner) {
-                cleared = new HashSet<>(cleared);
-                cleared.add("path");
-              }
-              out = out.union(a.then(Taint.append(Taint.append(List.of(in), r.getValue().path()), List.of(back)), cleared));
-            }
-          }
-        }
-        return out;
+        return returned(target, s, s.returns.isEmpty() ? Map.of() : mapArgs(target, head, callArgs, env), name);
       }
       String callee = qualify(head, env);
       String method = name.text();
@@ -928,6 +1120,27 @@ public final class TaintEngine {
         return args.clear(kinds);
       }
       return models.propagator(callee, method, receiver) ? args : Taint.EMPTY;
+    }
+
+    /** The value a call of a project function returns: its own inputs, and the arguments that reach its return. */
+    private Taint returned(Function target, Summary s, Map<Integer, Taint> args, Token name) {
+      Step in = step(name, "passed to " + target.label() + "()");
+      Step back = step(name, "returned by " + target.label() + "()");
+      Taint out = s.returnSources.then(List.of(back), Set.of());
+      // clean_path(p), safe_filename(n): a project helper named for making a path safe
+      boolean pathCleaner = PATH_CLEANER.matcher(target.name()).find();
+      for (Map.Entry<Integer, Taint.Flow> r : s.returns.entrySet()) {
+        Taint a = args.get(r.getKey());
+        if (a != null) {
+          Set<String> cleared = r.getValue().cleared();
+          if (pathCleaner) {
+            cleared = new HashSet<>(cleared);
+            cleared.add("path");
+          }
+          out = out.union(a.then(Taint.append(Taint.append(List.of(in), r.getValue().path()), List.of(back)), cleared));
+        }
+      }
+      return out;
     }
 
     // ---- sinks, calls into project functions, guards
@@ -946,12 +1159,28 @@ public final class TaintEngine {
           }
           List<Chain.Segment> receiverSegs = segs.subList(0, ci - 1);
           String head = ci == k ? Exprs.head(c) : null;
-          Function target = head == null ? null : resolve(head);
+          Function target = head == null ? null : resolve(head, env);
           if (target != null) {
             if (collect) {
               callers.computeIfAbsent(target, x -> new LinkedHashSet<>()).add(fn);
             }
-            paramSinks(target, head, n.token(), call.args(), env);
+            if (!summaries.getOrDefault(target, Summary.EMPTY).sinks.isEmpty()) {
+              paramSinks(target, mapArgs(target, head, call.args(), env), n.token());
+            }
+            continue;
+          }
+          // Client(url): its __init__; Client(url).fetch(): fetch with the attributes the constructor stored
+          PyClass cls = k > 0 && (ci == k || ci == k + 2 && segs.get(k) instanceof Chain.Call) ? projectClass(Exprs.head(c)) : null;
+          Function member = cls == null ? null : model.method(cls, ci == k ? "__init__" : n.token().text());
+          if (member != null) {
+            if (collect) {
+              callers.computeIfAbsent(member, x -> new LinkedHashSet<>()).add(fn);
+            }
+            if (!summaries.getOrDefault(member, Summary.EMPTY).sinks.isEmpty()) {
+              Token ctorName = ((Chain.Name) segs.get(k - 1)).token();
+              paramSinks(member, ci == k ? mapArgs(member, 1, call.args(), env)
+                : chained(cls, ctorName, (Chain.Call) segs.get(k), member, call, env), n.token());
+            }
             continue;
           }
           String callee = head != null ? qualify(head, env) : "*." + n.token().text();
@@ -1006,12 +1235,8 @@ public final class TaintEngine {
       });
     }
 
-    private void paramSinks(Function target, String head, Token name, Node.Group callArgs, Env env) {
+    private void paramSinks(Function target, Map<Integer, Taint> args, Token name) {
       Summary s = summaries.getOrDefault(target, Summary.EMPTY);
-      if (s.sinks.isEmpty()) {
-        return;
-      }
-      Map<Integer, Taint> args = mapArgs(target, head, callArgs, env);
       Step in = step(name, "passed to " + target.label() + "()");
       for (Summary.ParamSink ps : s.sinks) {
         Taint a = args.get(ps.param());
@@ -1145,6 +1370,23 @@ public final class TaintEngine {
 
     // ---- names
 
+    /** The project class a constructor call names ({@code Client}, {@code clients.Client}): capitalised names only. */
+    private PyClass projectClass(String head) {
+      String last = head.substring(head.lastIndexOf('.') + 1);
+      if (last.isEmpty() || !Character.isUpperCase(last.charAt(0))) {
+        return null;
+      }
+      return classes.computeIfAbsent(m, x -> new HashMap<>()).computeIfAbsent(head, h -> java.util.Optional.ofNullable(model.cls(m, h))).orElse(null);
+    }
+
+    /** As {@link #resolve(String)}, and a method of an instance built here ({@code client = Client(url)}, then {@code client.fetch()}). */
+    private Function resolve(String head, Env env) {
+      int dot = head.lastIndexOf('.');
+      PyClass c = dot > 0 ? env.classes.get(head.substring(0, dot)) : null;
+      Function f = c == null ? null : model.method(c, head.substring(dot + 1));
+      return f != null ? f : resolve(head);
+    }
+
     /** The project function a called name denotes: a method of this class, a nested def, a module or imported function. */
     private Function resolve(String head) {
       int dot = head.indexOf('.');
@@ -1174,11 +1416,26 @@ public final class TaintEngine {
 
     /** Argument values by parameter index of the callee: positional, keyword, *args and **kwargs. */
     private Map<Integer, Taint> mapArgs(Function target, String head, Node.Group callArgs, Env env) {
-      List<Function.Param> ps = target.params();
       // obj.method(x) and Class.classmethod(x) pass the receiver themselves; Class.method(obj, x) does not
       boolean bound = target.takesSelf() && head.contains(".") && (model.cls(m, head.substring(0, head.lastIndexOf('.'))) == null
         || target.decorators().stream().anyMatch(d -> d.name().equals("classmethod")));
-      int offset = bound ? 1 : 0;
+      Map<Integer, Taint> out = mapArgs(target, bound ? 1 : 0, callArgs, env);
+      if (bound) {
+        // client.fetch(), self.fetch(): the receiver's attributes for fetch's self.url
+        String prefix = head.substring(0, head.lastIndexOf('.') + 1);
+        env.vars.forEach((key, t) -> {
+          Integer id = key.startsWith(prefix) && key.indexOf('.', prefix.length()) < 0 ? attrIds.get(key.substring(prefix.length())) : null;
+          if (id != null) {
+            out.merge(ATTR + id, t, Taint::union);
+          }
+        });
+      }
+      return out;
+    }
+
+    /** Argument values by parameter index, the first positional one at {@code offset}. */
+    private Map<Integer, Taint> mapArgs(Function target, int offset, Node.Group callArgs, Env env) {
+      List<Function.Param> ps = target.params();
       int varArgs = -1;
       int kwArgs = -1;
       for (int i = 0; i < ps.size(); i++) {

@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import path, re_path
 
 from . import views
 
@@ -10,4 +10,19 @@ urlpatterns = [
     path("card/safe/", views.card_safe),
     path("crumb/", views.breadcrumb),
     path("pager/", views.pager),
+    path("hello/", views.hello),
+    path("search/", views.search),
+    path("theme/", views.theme),
+    path("board/<board_id>/", views.board),
+    path("note/", views.note),
+    path("page/<int:page>/", views.page),
+    path("hello/plain/", views.hello_plain),
+    path("hello/json/", views.hello_json),
+    path("hello/escaped/", views.hello_escaped),
+    path("hello/text/", views.hello_text),
+    path("hello/typed/", views.hello_typed),
+    re_path(r"^customer/(?P<customer_name>[a-zA-Z \s]+)/$", views.customer),
+    re_path(r"^animals/(?P<count>\d+)/(?P<animals>\D+)$", views.animals),
+    path("welcome/", views.welcome, kwargs={"title": "Hi"}),
+    path("archive/<year4:year>/", views.archive),
 ]

@@ -65,7 +65,7 @@ public final class RuleCatalog {
       "Request data passed to redirect(), RedirectResponse or HttpResponseRedirect without url_has_allowed_host_and_scheme or an allow-list sends users anywhere from a trusted link.",
       "def login_done(request):\n    return redirect(request.GET[\"next\"])  # Noncompliant", OpenRedirect::new),
     spec("UnsafeTemplate", Type.VULNERABILITY, "CRITICAL", true, "template", "Request data should not be rendered as markup or template source",
-      "Request data reaching mark_safe, Markup, render_template_string, Template(...).render or an HTMLResponse built from an f-string is cross-site scripting or template injection. Let the template engine escape it.",
+      "Request data reaching mark_safe, Markup, render_template_string, Template(...).render, an HTMLResponse, or an HttpResponse string holding an HTML tag is cross-site scripting or template injection. Let the template engine escape it.",
       "@app.route(\"/hello\")\ndef hello():\n    return render_template_string(\"Hello \" + request.args[\"name\"])  # Noncompliant", UnsafeTemplate::new),
     spec("UnsafeDeserialization", Type.VULNERABILITY, "CRITICAL", true, "deserialization", "Request data should not be deserialized with pickle or unsafe YAML",
       "Request data or uploaded files given to pickle.loads, yaml.load without a safe loader, marshal or jsonpickle let a caller run code on the server. Use JSON or yaml.safe_load.",

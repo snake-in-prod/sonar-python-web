@@ -181,6 +181,13 @@ and `unless` keyword values: `shell=True` for subprocess, a safe `Loader` for ya
 "httpx.AsyncClient.get"), or `*.name` for a method of that name on any receiver; `a.b.c|d` is a.b.c and a.b.d. New
 sinks and sanitizers go there, not in rules.
 
+Django `HttpResponse` (and its 400 / 403 / 404 / 500 subclasses) is a template sink there; UnsafeTemplate reports it
+only when the content is a string written in the call (literal, f-string, `+`, `%`, `.format`) whose literal part holds
+an HTML tag, and the response has no `content_type` or one naming html, the way it reads a string a Flask view
+returns. It skips template findings whose input is a URL parameter that cannot hold markup (`TaintChecks.markupFreePathParam`:
+a converter other than str and path, a regex group of letters, digits and spaces, a Django view argument no route
+passes).
+
 ## Writing a rule
 
 A rule is a class in `rules/` implementing `PwRule`, registered in `RuleCatalog` (key, type, severity, active in the

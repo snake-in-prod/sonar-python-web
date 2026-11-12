@@ -26,7 +26,11 @@ import org.sonar.api.measures.Metric;
 
 /**
  * Runs every rule on a directory without SonarQube, for checking rules on real apps:
- * {@code java -cp target/classes:<gson.jar> io.github.snakeinprod.pythonweb.cli.Scan <dir> [--endpoints] [--findings] [--json]}.
+ * {@code java -cp target/classes:<gson.jar>:<sonar-plugin-api.jar> io.github.snakeinprod.pythonweb.cli.Scan <dir>
+ * [--endpoints] [--findings] [--json]}, with the gson and sonar-plugin-api jars of the local Maven repository
+ * ({@code ~/.m2/repository/com/google/code/gson/gson/<version>/} and
+ * {@code ~/.m2/repository/org/sonarsource/api/plugin/sonar-plugin-api/<version>/}, the versions of the pom). A directory
+ * that is a symbolic link is followed.
  * Prints one issue per line ({@code path:line:column rule message}), then the measures and a count per rule;
  * {@code --endpoints} adds every endpoint, {@code --findings} every taint finding with its path, {@code --json} the
  * endpoints JSON.
@@ -41,7 +45,7 @@ public final class Scan {
   }
 
   public static void main(String[] args) throws IOException {
-    Path root = Path.of(args[0]).toAbsolutePath().normalize();
+    Path root = Path.of(args[0]).toRealPath();
     List<String> flags = List.of(args).subList(1, args.length);
     Set<String> paths = new TreeSet<>();
     try (Stream<Path> files = Files.walk(root)) {

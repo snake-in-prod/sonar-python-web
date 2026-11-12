@@ -71,6 +71,8 @@
     {"kind": "template", "call": "django.template.Template", "args": [0], "kwargs": ["template_string"]},
     {"kind": "template", "call": "fastapi.responses.HTMLResponse", "args": [0], "kwargs": ["content"]},
     {"kind": "template", "call": "starlette.responses.HTMLResponse", "args": [0], "kwargs": ["content"]},
+    {"kind": "template", "call": "django.http.HttpResponse|HttpResponseBadRequest|HttpResponseNotFound|HttpResponseForbidden|HttpResponseServerError", "args": [0], "kwargs": ["content"]},
+    {"kind": "template", "call": "django.http.response.HttpResponse|HttpResponseBadRequest|HttpResponseNotFound|HttpResponseForbidden|HttpResponseServerError", "args": [0], "kwargs": ["content"]},
 
     {"kind": "deserialization", "call": "pickle.loads|load", "args": [0], "kwargs": ["data", "file"]},
     {"kind": "deserialization", "call": "_pickle.loads|load", "args": [0]},

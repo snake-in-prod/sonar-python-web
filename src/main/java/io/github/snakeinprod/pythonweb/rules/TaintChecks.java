@@ -3,6 +3,7 @@ package io.github.snakeinprod.pythonweb.rules;
 import io.github.snakeinprod.pythonweb.lang.python.PyStatement;
 import io.github.snakeinprod.pythonweb.model.Endpoint;
 import io.github.snakeinprod.pythonweb.model.Exprs;
+import io.github.snakeinprod.pythonweb.model.Framework;
 import io.github.snakeinprod.pythonweb.model.Function;
 import io.github.snakeinprod.pythonweb.model.PyClass;
 import io.github.snakeinprod.pythonweb.parse.Chain;
@@ -33,6 +34,8 @@ final class TaintChecks {
   private static final Pattern LOOKUP = Pattern.compile("\\b(filter_by|get_or_404|first_or_404|get_object_or_404|objects\\.get|query\\.get)\\(");
   private static final Pattern REGEX_GROUP =Pattern.compile("\\((?!\\?[:=!<])(?:\\?P<(\\w+)>)?((?:[^()\\\\]|\\\\.)*)\\)");
   private static final Pattern SLASH_FREE = Pattern.compile("(\\\\w|\\\\d|\\[[^\\]/^]*]|\\[\\^/])(\\+|\\*|\\{\\d+(,\\d*)?})?");
+  /** Regex atoms that match no markup character: \\w, \\d, \\s, letters, digits, a class without < > " ' & or ^. */
+  private static final Pattern MARKUP_FREE = Pattern.compile("((\\\\w|\\\\d|\\\\s|[A-Za-z0-9 _-]|\\[[^\\]<>\"'&^]*])(\\+|\\*|\\?|\\{\\d+(,\\d*)?})?)+");
   private static final Pattern ADMIN =Pattern.compile("(?i)admin|superuser|staff");
   private static final Set<String> VALIDATORS = Set.of("field_validator", "validator", "model_validator", "root_validator");
 
@@ -235,6 +238,19 @@ final class TaintChecks {
    * on every route of its function: it cannot name another directory.
    */
   static boolean slashFreePathParam(RuleContext ctx, Finding f) {
+    return pathParam(ctx, f, conv -> conv == null || conv.equals("str") || conv.equals("string"), SLASH_FREE, false);
+  }
+
+  /**
+   * The input is a URL path parameter that cannot hold markup on any route of its function: a converter other than str
+   * and path (a project converter such as {@code <year4:year>}), a regex group of letters, digits and spaces
+   * ({@code (?P<name>[a-zA-Z]+)}), or a Django view parameter no route passes (a {@code kwargs=} value of path()).
+   */
+  static boolean markupFreePathParam(RuleContext ctx, Finding f) {
+    return pathParam(ctx, f, conv -> conv != null && !Set.of("str", "string", "path").contains(conv), MARKUP_FREE, true);
+  }
+
+  private static boolean pathParam(RuleContext ctx, Finding f, Predicate<String> converter, Pattern group, boolean unpassedOk) {
     Function.Param p = param(f);
     List<Endpoint> es = p == null ? List.of() : ctx.model().endpointsOf(f.function());
     if (es.isEmpty()) {
@@ -245,13 +261,13 @@ final class TaintChecks {
     for (Endpoint e : es) {
       Matcher m = placeholder.matcher(e.path());
       if (!m.find()) {
-        if (!slashFreeGroup(e.path(), f.function(), p)) {
+        Boolean g = groupMatches(e.path(), f.function(), p, group);
+        if (g == null ? !(unpassedOk && e.framework() == Framework.DJANGO) : !g) {
           return false;
         }
         continue;
       }
-      String conv = m.group(1) != null ? m.group(1) : m.group(2);
-      if (conv != null && !conv.equals("str") && !conv.equals("string")) {
+      if (!converter.test(m.group(1) != null ? m.group(1) : m.group(2))) {
         return false;
       }
     }
@@ -259,22 +275,22 @@ final class TaintChecks {
   }
 
   /**
-   * A Django regex route's group for the parameter, by name ({@code (?P<key>\w+)}) or by position after the request
-   * ({@code (\w+)}), matches no "/": \w, \d, a class without "/", or [^/].
+   * Whether a Django regex route's group for the parameter, by name ({@code (?P<key>\w+)}) or by position after the
+   * request ({@code (\w+)}), is matched whole by the pattern; null when the route has no group for it.
    */
-  private static boolean slashFreeGroup(String path, Function fn, Function.Param p) {
+  private static Boolean groupMatches(String path, Function fn, Function.Param p, Pattern pattern) {
     List<String> positional = new java.util.ArrayList<>();
     Matcher g = REGEX_GROUP.matcher(path);
     while (g.find()) {
       if (g.group(1) != null && g.group(1).equals(p.name())) {
-        return SLASH_FREE.matcher(g.group(2)).matches();
+        return pattern.matcher(g.group(2)).matches();
       }
       if (g.group(1) == null) {
         positional.add(g.group(2));
       }
     }
     int i = fn.params().indexOf(p) - (fn.takesSelf() ? 2 : 1);
-    return i >= 0 && i < positional.size() && SLASH_FREE.matcher(positional.get(i)).matches();
+    return i >= 0 && i < positional.size() ? pattern.matcher(positional.get(i)).matches() : null;
   }
 
   /**

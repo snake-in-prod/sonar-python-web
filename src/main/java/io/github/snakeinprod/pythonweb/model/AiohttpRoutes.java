@@ -8,7 +8,8 @@ import io.github.snakeinprod.pythonweb.parse.Nodes;
 import io.github.snakeinprod.pythonweb.parse.Token;
 import io.github.snakeinprod.pythonweb.parse.TokenKind;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -16,12 +17,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
- * aiohttp endpoints: {@code @routes.get/post/.../view(path)} of a {@code web.RouteTableDef()}, {@code
+ * aiohttp endpoints: {@code @routes.get/post/.../view(path)} of a {@code web.RouteTableDef()} some {@code
+ * app.add_routes(routes)} adds, {@code
  * x.router.add_get/add_post/.../add_route/add_view(path, handler)}, {@code web.get/post/.../route/view(path, handler)}
  * (in {@code app.add_routes([...])} or anywhere); a class handler (a {@code web.View}) gives one endpoint per verb
- * method. Auth: an auth decorator, aiohttp_security calls ({@code check_authorized}, {@code check_permission}, {@code
+ * method. Paths take the prefixes of the sub-app they are added to ({@link AiohttpApps}). Auth: an auth decorator, aiohttp_security calls ({@code check_authorized}, {@code check_permission}, {@code
  * authorized_userid}) or an aiohttp_session login check in the handler or a helper it calls, or an auth middleware
  * registered on an app ({@code web.Application(middlewares=[...])}, {@code app.middlewares.append(...)}).
  */
@@ -38,8 +41,17 @@ final class AiohttpRoutes {
   private static final Pattern SESSION_REFUSAL = Pattern.compile("HTTPUnauthorized|HTTP(Found|SeeOther)\\([^)]*login");
 
   private final WebModel model;
-  private final Set<String> tables = new HashSet<>();
+  /** Route tables: the {@code web.RouteTableDef()} call (see {@link AiohttpApps#key}) to its variable name. */
+  private final Map<String, String> tables = new HashMap<>();
+  /** Tables added to an app ({@code app.add_routes(routes)}), with the prefixes of the apps. */
+  private final Map<String, Set<String>> registered = new HashMap<>();
+  /** The {@code add_routes} calls outside tests. */
+  private final List<AddRoutes> adds = new ArrayList<>();
+  private AiohttpApps apps;
   private String middleware;
+
+  private record AddRoutes(Module module, List<Node> arg, Set<String> prefixes) {
+  }
 
   private AiohttpRoutes(WebModel model) {
     this.model = model;
@@ -58,13 +70,15 @@ final class AiohttpRoutes {
         String var = parts.size() == 2 ? Exprs.dotted(Exprs.unannotated(parts.get(0))) : null;
         if (c != null && var != null && Exprs.firstCall(c) != null
           && m.resolve(Exprs.head(c)).matches("aiohttp\\.web(_routedef)?\\.RouteTableDef")) {
-          tables.add(m.path() + "#" + var);
+          tables.put(AiohttpApps.key(m, c), var.substring(var.lastIndexOf('.') + 1));
         }
         for (Chain ch : Chains.in(s.group())) {
           middlewares(m, ch);
         }
       }
     }
+    apps = new AiohttpApps(model, model.modules().stream().filter(m -> !m.isTest()).toList());
+    registrations();
     List<Endpoint> out = new ArrayList<>();
     for (Module m : mods) {
       for (PyStatement s : m.py().walk()) {
@@ -90,34 +104,124 @@ final class AiohttpRoutes {
           String verb = route ? Exprs.string(method) : kind;
           if (path != null && handler != null && verb != null) {
             Function at = m.functionAt(s.first().line());
-            add(out, m, at, Exprs.dotted(handler), path, verb.toUpperCase(Locale.ROOT));
+            for (String prefix : web.matches() ? listed(m, at, s) : apps.prefixes(m, at, receiver)) {
+              add(out, m, at, Exprs.dotted(handler), prefix + path, verb.toUpperCase(Locale.ROOT));
+            }
           }
         }
       }
       for (Function f : m.functions()) {
         for (Decorator d : f.decorators()) {
-          String path = table(m, d) ? path(Exprs.arg(d.call(), 0, "path")) : null;
+          Set<String> prefixes = registered.getOrDefault(table(m, f.owner(), f.parent(), d), Set.of());
+          String path = prefixes.isEmpty() ? null : path(Exprs.arg(d.call(), 0, "path"));
+          List<String> methods = List.of();
           if (path != null && (VERBS.contains(d.last()) || d.last().equals("head"))) {
-            out.add(endpoint(f, null, path, List.of(d.last().toUpperCase(Locale.ROOT))));
+            methods = List.of(d.last().toUpperCase(Locale.ROOT));
           } else if (path != null && d.last().equals("route")) {
             String verb = Exprs.string(Exprs.arg(d.call(), 0, "method"));
             path = path(Exprs.arg(d.call(), 1, "path"));
-            if (verb != null && path != null) {
-              out.add(endpoint(f, null, path, List.of(verb.equals("*") ? "ANY" : verb.toUpperCase(Locale.ROOT))));
-            }
+            methods = verb == null || path == null ? List.of() : List.of(verb.equals("*") ? "ANY" : verb.toUpperCase(Locale.ROOT));
+          }
+          for (String prefix : methods.isEmpty() ? Set.<String>of() : prefixes) {
+            out.add(endpoint(f, null, prefix + path, methods));
           }
         }
       }
       for (PyClass k : m.classes()) {
         for (Decorator d : k.decorators()) {
-          String path = table(m, d) && d.last().equals("view") ? path(Exprs.arg(d.call(), 0, "path")) : null;
-          if (path != null) {
-            view(out, k, path, "VIEW");
+          Set<String> prefixes = d.last().equals("view")
+            ? registered.getOrDefault(table(m, null, m.functionAt(k.firstLine()), d), Set.of()) : Set.of();
+          String path = prefixes.isEmpty() ? null : path(Exprs.arg(d.call(), 0, "path"));
+          for (String prefix : path == null ? Set.<String>of() : prefixes) {
+            view(out, k, prefix + path, "VIEW");
           }
         }
       }
     }
     return merged(out);
+  }
+
+  /**
+   * The {@code add_routes} calls: which tables they add, to apps with which prefixes. A table added only in tests
+   * still counts (with no prefix); a table never added to an app gives no endpoint.
+   */
+  private void registrations() {
+    List<Module> all = new ArrayList<>(model.modules());
+    all.sort((a, b) -> Boolean.compare(a.isTest(), b.isTest()));
+    for (Module m : all) {
+      for (PyStatement s : m.py().walk()) {
+        for (Chain c : Chains.in(s.group())) {
+          Chain.Call call = Exprs.firstCall(c);
+          String head = Exprs.head(c);
+          List<Node> arg = call != null && head.endsWith(".add_routes") ? Exprs.arg(call, 0, "routes") : null;
+          if (arg == null) {
+            continue;
+          }
+          Function at = m.functionAt(c.line());
+          Set<String> prefixes = m.isTest() ? Set.of("") : apps.prefixes(m, at, head.substring(0, head.lastIndexOf('.')));
+          if (!m.isTest()) {
+            adds.add(new AddRoutes(m, arg, prefixes));
+          }
+          for (String t : tablesIn(m, at, arg)) {
+            if (!m.isTest() || !registered.containsKey(t)) {
+              registered.computeIfAbsent(t, k -> new LinkedHashSet<>()).addAll(prefixes);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * The tables an {@code add_routes} argument denotes. One that cannot be followed ({@code webapp.add_routes(m.routes)}
+   * over a registry, a list of tables) stands for every table of that name.
+   */
+  private Set<String> tablesIn(Module m, Function at, List<Node> arg) {
+    String name = Exprs.dotted(arg);
+    Set<String> out = new LinkedHashSet<>();
+    if (name != null) {
+      apps.of(m, at, name).stream().filter(tables::containsKey).forEach(out::add);
+    }
+    if (out.isEmpty()) {
+      Set<String> words = name != null ? Set.of(name.substring(name.lastIndexOf('.') + 1))
+        : Nodes.tokens(arg).stream().filter(t -> t.kind() == TokenKind.IDENT).map(Token::text).collect(Collectors.toSet());
+      tables.forEach((k, v) -> {
+        if (words.contains(v)) {
+          out.add(k);
+        }
+      });
+    }
+    return out;
+  }
+
+  /**
+   * The prefixes of the app a {@code web.get(...)} of statement {@code s} goes to: the {@code add_routes([...])} it is
+   * in, or the one that adds the list it is assigned or appended to ({@code routes = [...]}, {@code routes.append(...)}).
+   */
+  private Set<String> listed(Module m, Function at, PyStatement s) {
+    for (Chain c : Chains.in(s.group())) {
+      String head = Exprs.head(c);
+      if (Exprs.firstCall(c) != null && head.endsWith(".add_routes")) {
+        return apps.prefixes(m, at, head.substring(0, head.lastIndexOf('.')));
+      }
+    }
+    List<List<Node>> parts = Exprs.assignment(s.nodes());
+    String var = parts.size() > 1 ? Exprs.dotted(Exprs.unannotated(parts.get(0))) : null;
+    Chain first = var == null && !s.nodes().isEmpty() ? Chains.direct(s.group()).stream().findFirst().orElse(null) : null;
+    if (first != null && Exprs.firstCall(first) != null && Exprs.head(first).matches("[\\w.]+\\.(append|extend|insert)")) {
+      var = Exprs.head(first).substring(0, Exprs.head(first).lastIndexOf('.'));
+    } else if (var == null && s.nodes().size() > 1 && Nodes.isLeaf(s.nodes().get(1), "+=")) {
+      var = Exprs.dotted(s.nodes().subList(0, 1));
+    }
+    Set<String> out = new LinkedHashSet<>();
+    for (AddRoutes a : var == null ? List.<AddRoutes>of() : adds) {
+      String name = Exprs.dotted(a.arg());
+      WebModel.Ref r = name == null ? null : a.module() == m ? new WebModel.Ref(m, name) : model.locate(a.module(), name);
+      if (r != null && r.module() == m && r.name().equals(var)) {
+        out.addAll(a.prefixes());
+      }
+    }
+    return out.isEmpty() ? Set.of("") : out;
   }
 
   /** One endpoint per handler and path: {@code add_get("/", index)} and {@code add_post("/", index)} give GET|POST /. */
@@ -138,16 +242,17 @@ final class AiohttpRoutes {
     return new ArrayList<>(out.values());
   }
 
-  /** A decorator of a RouteTableDef: {@code @routes.get("/x")}. */
-  private boolean table(Module m, Decorator d) {
+  /**
+   * The table a decorator is of ({@code @routes.get("/x")}): a class attribute of {@code owner}, else a name seen
+   * from {@code scope}; or null.
+   */
+  private String table(Module m, PyClass owner, Function scope, Decorator d) {
     if (d.call() == null || d.receiver().isEmpty()) {
-      return false;
+      return null;
     }
-    if (tables.contains(m.path() + "#" + d.receiver())) {
-      return true;
-    }
-    WebModel.Ref r = model.locate(m, d.receiver());
-    return r != null && tables.contains(r.module().path() + "#" + r.name());
+    List<Node> attr = owner == null ? null : owner.attributes().get(d.receiver());
+    Set<String> keys = attr != null ? apps.of(m, null, attr, 0) : apps.of(m, scope, d.receiver());
+    return keys.stream().filter(tables::containsKey).findFirst().orElse(null);
   }
 
   /** The endpoints of one registered handler: a function, a method ({@code self.handle_post}) or a view class. */

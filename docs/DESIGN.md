@@ -100,7 +100,8 @@ above the file (deepest first) and its `src/`, so a Django app beside manage.py 
 - Flask: `Flask()` apps (also `application = create_app()` with a project factory) and `Blueprint(url_prefix=...)`,
   `@x.route(rule, methods=[...])`, `@x.get/post/...`, `add_url_rule`, a project helper called with a blueprint and
   `view_func=` (`register_view(bp, routes=[...], view_func=V.as_view(...))`), `register_blueprint(url_prefix=...)`;
-  `MethodView.as_view` gives one endpoint per verb method. Flask-RESTful / RESTX: `Api()` (or a project subclass),
+  `MethodView.as_view` gives one endpoint per verb method; a route decorator on an instance method (called without the
+  instance) gives none. Flask-RESTful / RESTX: `Api()` (or a project subclass),
   `api.add_resource(Resource, "/url", ...)` and any project method of the subclass taking the resource first. A rule
   wrapped in a helper (`org_scoped_rule("/x")`) reads as its literal. Auth: decorators (`login_required`,
   `jwt_required`..., every one with its arguments: `@login_required @roles_required("Admin")`), project decorators
@@ -113,7 +114,16 @@ above the file (deepest first) and its `src/`, so a Django app beside manage.py 
   or a list). The handler is a function (a nested one in the factory included), `self.method` of the registering class,
   or a class: one endpoint per verb method (all of them for "*" and views). A handler and path registered for several
   methods is one endpoint. An f-string path keeps its literal parts (`f"{base}/rooms/{{name}}"` gives "/rooms/{name}").
-  `add_subapp` prefixes and routes a registry builds at run time are not followed. Auth: an auth decorator or a project
+  Each registration is tied to the `web.Application()` it adds to (`AiohttpApps`): the receiver (`app`, `app.router`) is
+  followed through assignments, `for` loops, imports, a factory that returns the app (`app.add_subapp("/api",
+  make_api())`) and parameters (to what every caller passes: `setup_routes(app)`, `handler.register(app)` with
+  `handler = Handler(...)`, only calls on an instance of the method's class when the type is known), not through
+  `self.app`. `parent.add_subapp(prefix, child)` prefixes the child's routes, nested sub-apps joined, the trailing
+  slash dropped as aiohttp does ("/api/v1" + "/secrets" + "/{key}"). A RouteTableDef is an endpoint only once some
+  `x.add_routes(table)` (or `x.router.add_routes`) adds it, with the prefixes of that app; one added only in a test
+  counts without a prefix; an argument that cannot be followed (`webapp.add_routes(method.routes)` over a registry)
+  stands for every table of that name. Routes a registry builds at run time (`app.router.add_route(*r)` over a list)
+  are not followed. Auth: an auth decorator or a project
   decorator that checks the caller, aiohttp_security `check_authorized` / `check_permission(s)` / `permits` in the
   handler, `authorized_userid` with an `HTTPUnauthorized` or a redirect to a login page, an aiohttp_session login
   check (`get_session` read, then `HTTPUnauthorized` or a redirect to a login page), a user test; the same in a helper

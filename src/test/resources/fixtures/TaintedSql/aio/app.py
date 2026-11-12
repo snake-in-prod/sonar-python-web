@@ -27,3 +27,7 @@ async def search(request):
     term = request.rel_url.query.get("q", "")
     rows = await request.app["db"].fetch(f"SELECT * FROM students WHERE name LIKE '%{term}%'")  # Noncompliant
     return web.json_response(rows)
+
+
+app = web.Application()
+app.add_routes(routes)

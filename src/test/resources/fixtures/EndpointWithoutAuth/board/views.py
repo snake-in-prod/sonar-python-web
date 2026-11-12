@@ -1,3 +1,5 @@
+import subprocess
+
 from flask import Blueprint, abort, request
 from flask_login import current_user, login_required
 
@@ -70,3 +72,16 @@ def update_post(pid):
 def checkout_pass(pid):
     Post.query.get(pid).body = "checked out"
     db.session.commit()
+
+
+@bp.post("/backup")
+def backup():  # Noncompliant
+    subprocess.run(["tar", "czf", "/backups/board.tgz", "/data"])
+    return "", 204
+
+
+class Job:
+    # a route on an instance method: Flask calls it without the instance, so it is no endpoint
+    @bp.route("/job", methods=["POST"])
+    def run(self):
+        subprocess.run(["tar", "czf", "/backups/board.tgz", "/data"])

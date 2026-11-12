@@ -172,7 +172,8 @@ final class FlaskRoutes {
       for (Function f : m.functions()) {
         for (Decorator d : f.decorators()) {
           Holder h = d.receiver().isEmpty() ? null : holder(m, d.receiver());
-          if (h != null && d.call() != null && VERBS.contains(d.last())) {
+          // a route on an instance method is called without the instance: not an endpoint
+          if (h != null && d.call() != null && VERBS.contains(d.last()) && !f.takesSelf()) {
             List<String> methods = d.last().equals("route") ? methods(d.call()) : List.of(d.last().toUpperCase(Locale.ROOT));
             String rule = rule(Exprs.arg(d.call(), 0, "rule"));
             out.add(endpoint(h, f, null, rule, methods, f.token()));

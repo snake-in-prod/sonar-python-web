@@ -614,4 +614,120 @@ class WebModelTest {
       """);
     assertThat(endpoint(logged, "DELETE", "/notes/{id}").auth().present()).isFalse();
   }
+
+  @Test
+  void aiohttp_sub_apps_prefix_their_routes() {
+    WebModel model = TestProjects.model("svc/main.py", """
+      from aiohttp import web
+      from . import auth, views
+      from .handlers import ApiHandler, SecretsHandler
+
+      async def create_secrets_app():
+          app = web.Application()
+          handler = SecretsHandler(app)
+          handler.register(app)
+          return app
+
+      def make_admin():
+          sub = web.Application()
+          sub.router.add_routes(views.routes)
+          return sub
+
+      async def create_app():
+          app = web.Application()
+          api_v1 = web.Application()
+          ApiHandler().register(api_v1)
+          api_v1.add_subapp("/secrets", await create_secrets_app())
+          items = [web.post("/items", views.add_item)]
+          api_v1.add_routes(items)
+          app.add_subapp("/api/v1/", api_v1)
+          app.add_subapp("/admin/", make_admin())
+          app.add_subapp("/auth", auth.app)
+          app.router.add_get("/ping", views.ping)
+          return app
+      """, "svc/handlers.py", """
+      from aiohttp import web
+
+      class ApiHandler:
+          def register(self, app):
+              app.add_routes([web.get("/ping", self.ping)])
+
+          async def ping(self, request):
+              return web.Response()
+
+      class SecretsHandler:
+          def __init__(self, app):
+              self.app = app
+
+          def register(self, app):
+              app.add_routes([web.get("", self.list), web.get("/{key}", self.get)])
+
+          async def list(self, request):
+              return web.Response()
+
+          async def get(self, request):
+              return web.Response()
+      """, "svc/views.py", """
+      from aiohttp import web
+
+      routes = web.RouteTableDef()
+
+      @routes.post("/users")
+      async def add_user(request):
+          return web.Response()
+
+      async def add_item(request):
+          return web.Response()
+
+      async def ping(request):
+          return web.Response()
+      """, "svc/auth.py", """
+      from aiohttp import web
+
+      routes = web.RouteTableDef()
+
+      @routes.post("/login")
+      async def login(request):
+          return web.Response()
+
+      app = web.Application()
+      app.add_routes(routes)
+      """, "svc/tools.py", """
+      from aiohttp import web
+
+      routes = web.RouteTableDef()
+
+      @routes.post("/run")
+      async def run(request):
+          return web.Response()
+      """, "svc/plugin.py", """
+      from aiohttp import web
+
+      routes = web.RouteTableDef()
+
+      @routes.get("/plugin")
+      async def plugin(request):
+          return web.Response()
+      """, "tests/test_plugin.py", """
+      from aiohttp import web
+      from svc import plugin
+
+      def test_plugin():
+          app = web.Application()
+          app.add_routes(plugin.routes)
+      """);
+    assertThat(model.endpoints()).extracting(e -> e.methods().get(0) + " " + e.path() + " " + e.label()).containsExactlyInAnyOrder(
+      "GET /api/v1/ping ApiHandler.ping",
+      // a method of the right class: SecretsHandler.register, not ApiHandler.register, adds to the secrets app
+      "GET /api/v1/secrets SecretsHandler.list",
+      "GET /api/v1/secrets/{key} SecretsHandler.get",
+      "POST /api/v1/items add_item",
+      // a route table added in a factory that returns the sub-app
+      "POST /admin/users add_user",
+      // a sub-app made in another module
+      "POST /auth/login login",
+      "GET /ping ping",
+      // a table added only by a test still is an endpoint; tools.routes, added nowhere, is not
+      "GET /plugin plugin");
+  }
 }

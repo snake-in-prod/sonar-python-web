@@ -466,6 +466,9 @@ class TaintEngineTest {
               text = await self.request.text()
               subprocess.run(text, shell=True)
               return web.Response()
+
+      app = web.Application()
+      app.add_routes(routes)
       """);
     assertThat(found).allMatch(f -> f.kind().equals("command")).extracting(Finding::label).containsExactlyInAnyOrder(
       "request.query", "request.rel_url.query", "request.match_info", "request.post", "request.json", "request.headers",

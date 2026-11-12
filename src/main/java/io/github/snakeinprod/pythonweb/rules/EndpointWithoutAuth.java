@@ -24,7 +24,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
- * A mutating endpoint (PUT, PATCH, DELETE; POST or a Django view open to any method when it writes) with no check of
+ * A mutating endpoint (PUT, PATCH, DELETE; POST when it writes or runs a command; a Django view open to any method when it writes) with no check of
  * the caller, in an app where other endpoints do check it (for Flask, FastAPI and aiohttp, the app is the set of modules imports
  * connect, so the separate apps of one repository are judged apart). Silent when the endpoint is explicitly open
  * (AllowAny), looks public by its name (login, signup, webhook...), counts visits (POST .../view), says it is open in a
@@ -56,6 +56,10 @@ public class EndpointWithoutAuth implements PwRule {
   /** Auth-like text in a dependency, middleware or settings entry. */
   private static final Pattern AUTHISH = Pattern.compile("(?i)user|auth|login|token|jwt|permission|admin|key|oauth|bearer|verify|"
     + "role|scope|security|credential");
+
+  /** A call that starts a process: running a command on the server changes its state. */
+  private static final Pattern RUNS = Pattern.compile("os\\.(system|popen|exec\\w*|spawn\\w*)|subprocess\\.(run|call|check_call|check_output|"
+    + "Popen|getoutput|getstatusoutput)|asyncio\\.create_subprocess_(exec|shell)");
 
   private static final Pattern BY_IP = Pattern.compile("(?i)rate_?limit\\w*_by_ip|ratelimit\\w*\\(.*key=[\"']ip[\"']");
 
@@ -254,7 +258,7 @@ public class EndpointWithoutAuth implements PwRule {
     return out;
   }
 
-  /** The endpoint changes data: an ORM write, a handler or call named for a write, or a generic write view. */
+  /** The endpoint changes data: an ORM write, a handler or call named for a write, a process it starts, or a generic write view. */
   static boolean changesData(WebModel model, Endpoint e) {
     Function f = e.function();
     if (f == null) {
@@ -272,6 +276,9 @@ public class EndpointWithoutAuth implements PwRule {
       for (PyStatement x : s.walk()) {
         for (Chain c : Chains.in(x.group())) {
           if (c.endsWithCall() && (c.names().size() > 1 || c.lastName().contains("_")) && WRITE.matcher(c.lastName()).find()) {
+            return true;
+          }
+          if (Exprs.firstCall(c) != null && RUNS.matcher(f.module().resolve(Exprs.head(c))).matches()) {
             return true;
           }
         }

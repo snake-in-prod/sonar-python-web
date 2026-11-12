@@ -1,5 +1,5 @@
-<p>An endpoint that changes data (PUT, PATCH or DELETE; POST, or a Django view open to any method, when it writes) does
-not check who calls it, while other endpoints of the same app do. Anyone who can reach the server can create, change or
+<p>An endpoint that changes data (PUT, PATCH or DELETE; POST when it writes or runs a command on the server; a Django
+view open to any method when it writes) does not check who calls it, while other endpoints of the same app do. Anyone who can reach the server can create, change or
 delete the data it handles.</p>
 <p>The rule counts as a check: a FastAPI auth dependency (<code>Depends(get_current_user)</code>, <code>Security(...)</code>,
 a <code>fastapi.security</code> scheme, a dependency that reads a credential) on the route, a parameter, the router, the
@@ -13,7 +13,7 @@ check and an auth middleware registered on an aiohttp app; a check of the user, 
 key or a signature in the handler or a helper it calls.</p>
 <p>It stays silent for apps that check no caller anywhere, endpoints made open explicitly (<code>AllowAny</code>),
 endpoints that are public by purpose (login, signup, token, password reset, webhooks, callbacks, health), a POST that
-writes nothing, and apps whose authentication sits where the analysis does not look (auth middleware).</p>
+writes nothing and runs no command, and apps whose authentication sits where the analysis does not look (auth middleware).</p>
 <h2>Noncompliant code example</h2>
 <pre>
 router = APIRouter(prefix="/items")

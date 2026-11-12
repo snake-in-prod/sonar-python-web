@@ -452,6 +452,9 @@ public final class TaintEngine {
           header(b, env);
         }
         Env e = env.copy();
+        if (!b.keyword().equals("else")) {
+          narrow(b, e);
+        }
         block(b.body(), e);
         if (!exits(b.body())) {
           // a branch ending in return or raise does not reach the code after the if
@@ -463,6 +466,35 @@ public final class TaintEngine {
       }
       env.set(outs);
       return j - 1;
+    }
+
+    /**
+     * {@code if op == "add":}: inside the branch the variable is that literal. With an else that returns or raises, a
+     * chain of such tests leaves it one of the literals after the if.
+     */
+    private void narrow(PyStatement b, Env env) {
+      List<Node> n = b.nodes();
+      int to = Nodes.isLeaf(n.get(n.size() - 1), ":") ? n.size() - 1 : n.size();
+      for (List<Node> conjunct : splitIdents(n.subList(1, Math.max(1, to)), Set.of("and"))) {
+        String name = null;
+        for (List<Node> test : splitIdents(conjunct, Set.of("or"))) {
+          String x = test.size() != 3 || !Nodes.isLeaf(test.get(1), "==") ? null
+            : literal(test.get(2)) ? Exprs.dotted(test.subList(0, 1)) : literal(test.get(0)) ? Exprs.dotted(test.subList(2, 3)) : null;
+          if (x == null || name != null && !name.equals(x)) {
+            name = null;
+            break;
+          }
+          name = x;
+        }
+        if (name != null) {
+          env.vars.remove(name);
+        }
+      }
+    }
+
+    private static boolean literal(Node n) {
+      Token t = Nodes.leaf(n);
+      return t != null && t.kind() == TokenKind.STRING && Exprs.literal(t) != null;
     }
 
     private static boolean exits(List<PyStatement> body) {

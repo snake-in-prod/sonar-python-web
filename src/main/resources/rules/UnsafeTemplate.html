@@ -4,6 +4,8 @@ string by a FastAPI endpoint declared with <code>response_class=HTMLResponse</co
 string holding an HTML tag (<code>return f"&lt;h1&gt;Hello {name}&lt;/h1&gt;"</code>: Flask sends a string as
 <code>text/html</code>), or written in a string holding an HTML tag that a Django <code>HttpResponse</code> (or
 <code>HttpResponseBadRequest</code>, <code>HttpResponseNotFound</code>...) sends as HTML (<code>HttpResponse(f"&lt;p&gt;{q}&lt;/p&gt;")</code>).
+The string may be built first in a variable, in steps or as a list joined at the end (<code>html = "&lt;ul&gt;"</code>,
+then <code>html += f"&lt;li&gt;{q}&lt;/li&gt;"</code>, then <code>return html</code>).
 Request data used as the template
 source itself (<code>render_template_string</code>, <code>jinja2.Template</code>, <code>Environment.from_string</code>,
 <code>django.template.Template</code>) is worse: template injection runs code on the server.</p>
@@ -37,6 +39,9 @@ def hello(name: str):
   <li>The value is a FastAPI parameter typed <code>int</code> or another scalar.</li>
   <li>The <code>HttpResponse</code> has a <code>content_type</code> that is not HTML (<code>text/plain</code>, JSON) or that
     the code computes, its string holds no tag, or it is a <code>JsonResponse</code>.</li>
+  <li>The value is checked against literals first (<code>if op == "add": ... else: return ...</code>).</li>
+  <li>The value is a custom request header (<code>request.META["HTTP_X_FORWARDED_PROTO"]</code>,
+    <code>request.headers["X-Theme"]</code>): a link or form sending the victim to the site cannot set it.</li>
   <li>The value is a URL parameter that cannot hold markup: a converter other than <code>str</code> and
     <code>path</code>, a regex group of letters, digits and spaces (<code>(?P&lt;name&gt;[a-zA-Z]+)</code>), or a view
     argument given by <code>kwargs=</code> of <code>path()</code> rather than by the URL.</li>

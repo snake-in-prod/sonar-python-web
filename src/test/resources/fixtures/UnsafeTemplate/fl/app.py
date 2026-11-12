@@ -67,3 +67,37 @@ def hello_safe():
 @app.route("/count")
 def count():
     return f"Value must be < {request.args['max']}"
+
+
+@app.route("/list")
+def listing():
+    q = request.args.get("q", "")
+    html = "<ul>"
+    for word in q.split():
+        html += f"<li>{word}</li>"
+    html += "</ul>"
+    return html  # Noncompliant {{request.args of GET /list instead of returning it in HTML}}
+
+
+@app.route("/list/joined")
+def listing_joined():
+    parts = ["<ul>"]
+    for word in request.args.getlist("w"):
+        parts.append("<li>" + word + "</li>")
+    return "".join(parts), 200  # Noncompliant
+
+
+@app.route("/list/escaped")
+def listing_escaped():
+    html = "<ul>"
+    for word in request.args.getlist("w"):
+        html += f"<li>{escape(word)}</li>"
+    return html
+
+
+@app.route("/list/text")
+def listing_text():
+    out = "Words: "
+    for word in request.args.getlist("w"):
+        out += word + ", "
+    return out

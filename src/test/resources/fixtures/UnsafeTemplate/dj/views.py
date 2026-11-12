@@ -106,3 +106,56 @@ def welcome(request, title):
 def archive(request, year):
     # a project converter
     return HttpResponse(f"<p>Year: {year}</p>")
+
+
+def results(request):
+    q = request.GET.get("q", "")
+    html = "<h2>Results</h2>"
+    html += "<p>for " + q + "</p>"
+    return HttpResponse(html)  # Noncompliant {{request.GET of ANY /results/ instead of writing it in the HTML of HttpResponse()}}
+
+
+def results_joined(request):
+    rows = [f"<tr><td>{v}</td></tr>" for v in request.GET.getlist("v")]
+    return HttpResponse("\n".join(rows))  # Noncompliant
+
+
+def results_escaped(request):
+    html = "<h2>Results</h2>"
+    html += format_html("<p>for {}</p>", request.GET.get("q", ""))
+    return HttpResponse(html)
+
+
+def results_plain(request):
+    text = "Results for " + request.GET.get("q", "")
+    return HttpResponse(text)
+
+
+def calculator(request, operation, a):
+    if operation == "add":
+        result = a + 1
+    elif operation == "neg":
+        result = -a
+    else:
+        return HttpResponse("<h1>Invalid operation</h1>")
+    return HttpResponse(f"<h1>{operation}: {result}</h1>")
+
+
+def calculator_open(request, operation, a):
+    if operation == "add":
+        result = a + 1
+    else:
+        result = a
+    return HttpResponse(f"<h1>{operation}: {result}</h1>")  # Noncompliant {{parameter operation}}
+
+
+def preview(request):
+    # a custom header: a link or form sending the victim here cannot set it
+    proto = request.META.get("HTTP_X_FORWARDED_PROTO", "https")
+    html = f'<base href="{proto}://example.org/">'
+    return HttpResponse(html)
+
+
+def back(request):
+    html = '<a href="%s">Back</a>' % request.META.get("HTTP_REFERER", "/")
+    return HttpResponse(html)  # Noncompliant {{request.META}}

@@ -151,7 +151,9 @@ attribute, index and method reads on a tainted value (except the `cleanMethods` 
 `for x in ...`. Comparisons, `not`, lambdas and unknown calls
 give clean values; `propagators` (str, os.path.join, json.loads, pathlib.Path...) pass their arguments through.
 Branches of `if` and `try` are analysed apart and joined (a branch ending in return or raise does not reach the code
-after the `if`); loop bodies run twice. A URL whose start the server fixes clears the URL kinds (ssrf, redirect): a
+after the `if`); loop bodies run twice. Inside a branch whose condition is `x == "literal"` (or several such tests of
+the same name joined by `or`) `x` is clean, so a chain of them with an `else` that returns or raises leaves `x` one of
+the literals after the `if`. A URL whose start the server fixes clears the URL kinds (ssrf, redirect): a
 literal start (`"https://api.example/"`, `"/items/"`), or server values before a literal starting with "/", "?" or "#"
 (`protocol + settings.HOST + "/live/" + name`), or a server value named for a URL base (`upload_root_url() + path`).
 
@@ -204,9 +206,12 @@ and `unless` keyword values: `shell=True` for subprocess, a safe `Loader` for ya
 sinks and sanitizers go there, not in rules.
 
 Django `HttpResponse` (and its 400 / 403 / 404 / 500 subclasses) is a template sink there; UnsafeTemplate reports it
-only when the content is a string written in the call (literal, f-string, `+`, `%`, `.format`) whose literal part holds
-an HTML tag, and the response has no `content_type` or one naming html, the way it reads a string a Flask view
-returns. It skips template findings whose input is a URL parameter that cannot hold markup (`TaintChecks.markupFreePathParam`:
+only when the content is a string whose literal part holds an HTML tag, and the response has no `content_type` or one
+naming html, the way it reads a string a Flask view returns. The string is written in the call (literal, f-string, `+`,
+`%`, `.format`), or is a variable or a `"".join(...)` the function builds from such strings
+(`html = "<ul>"`, `html += f"<li>{q}</li>"`, `parts.append(...)`, a list or comprehension of them): one of the pieces
+assigned, added or appended holds the tag. A finding whose input is a custom header (`request.META["HTTP_X_..."]`,
+`request.headers.get("X-...")`) is skipped: a link or form sending the victim to the site cannot set it. It skips template findings whose input is a URL parameter that cannot hold markup (`TaintChecks.markupFreePathParam`:
 a converter other than str and path, a regex group of letters, digits and spaces, a Django view argument no route
 passes).
 

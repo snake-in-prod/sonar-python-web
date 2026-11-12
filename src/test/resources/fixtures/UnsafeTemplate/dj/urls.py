@@ -25,4 +25,12 @@ urlpatterns = [
     re_path(r"^animals/(?P<count>\d+)/(?P<animals>\D+)$", views.animals),
     path("welcome/", views.welcome, kwargs={"title": "Hi"}),
     path("archive/<year4:year>/", views.archive),
+    path("results/", views.results),
+    path("results/joined/", views.results_joined),
+    path("results/escaped/", views.results_escaped),
+    path("results/plain/", views.results_plain),
+    path("calc/<str:operation>/<int:a>/", views.calculator),
+    path("calc/open/<str:operation>/<int:a>/", views.calculator_open),
+    path("preview/", views.preview),
+    path("back/", views.back),
 ]
